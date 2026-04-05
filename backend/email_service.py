@@ -25,6 +25,10 @@ def _app_public_url() -> str:
 
 APP_PUBLIC_URL = _app_public_url()
 
+# Product UI primary (see frontend Tailwind / CSS variables — green, not amber)
+BRAND_ACCENT = "#22c55e"
+BRAND_ACCENT_TEXT = "#052e16"
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,8 +58,8 @@ async def send_email(to: str, subject: str, html_content: str) -> dict:
 # ========== Email Templates ==========
 
 async def send_welcome_email(to: str, name: str):
-    """Send welcome email after signup"""
-    subject = f"Welcome to {APP_NAME}! 🎉"
+    """Send welcome email after the account is activated (verified email or OAuth)."""
+    subject = f"Welcome to {APP_NAME}"
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -66,10 +70,10 @@ async def send_welcome_email(to: str, name: str):
             .container {{ max-width: 600px; margin: 0 auto; background-color: #18181b; border-radius: 8px; padding: 40px; }}
             .header {{ text-align: center; margin-bottom: 30px; }}
             .logo {{ font-size: 28px; font-weight: bold; color: #fff; }}
-            .logo span {{ color: #f59e0b; }}
+            .logo span {{ color: {BRAND_ACCENT}; }}
             h1 {{ color: #fff; font-size: 24px; margin-bottom: 10px; }}
             p {{ color: #a1a1aa; margin: 15px 0; }}
-            .button {{ display: inline-block; background-color: #f59e0b; color: #09090b; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
+            .button {{ display: inline-block; background-color: {BRAND_ACCENT}; color: {BRAND_ACCENT_TEXT}; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
             .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #27272a; text-align: center; color: #71717a; font-size: 14px; }}
         </style>
     </head>
@@ -78,19 +82,17 @@ async def send_welcome_email(to: str, name: str):
             <div class="header">
                 <div class="logo">Mzansi<span>Builds</span></div>
             </div>
-            <h1>Welcome, {name}! 👋</h1>
-            <p>Your account is ready. You're now part of a community of South African developers building in public.</p>
-            <p>Here's what you can do:</p>
+            <h1>Welcome, {name}</h1>
+            <p>Your MzansiBuilds account is ready — a place to document, track, and share what you are building.</p>
+            <p>Start by:</p>
             <ul style="color: #a1a1aa;">
-                <li>🚀 Create your first project</li>
-                <li>📢 Share updates as you build</li>
-                <li>🤝 Collaborate with other developers</li>
-                <li>🏆 Celebrate when you ship!</li>
+                <li>Completing your profile</li>
+                <li>Creating your first build</li>
+                <li>Posting a progress update</li>
             </ul>
-            <p>Ready to start building?</p>
-            <a href="{APP_PUBLIC_URL}/dashboard" class="button">Go to Dashboard</a>
+            <a href="{APP_PUBLIC_URL}/dashboard" class="button">Create your first build</a>
             <div class="footer">
-                <p>Built with pride in South Africa 🇿🇦</p>
+                <p>You are receiving this because you signed up for {APP_NAME}.</p>
             </div>
         </div>
     </body>
@@ -120,11 +122,11 @@ async def send_collaboration_request_email(
             .container {{ max-width: 600px; margin: 0 auto; background-color: #18181b; border-radius: 8px; padding: 40px; }}
             .header {{ text-align: center; margin-bottom: 30px; }}
             .logo {{ font-size: 28px; font-weight: bold; color: #fff; }}
-            .logo span {{ color: #f59e0b; }}
+            .logo span {{ color: {BRAND_ACCENT}; }}
             h1 {{ color: #fff; font-size: 24px; margin-bottom: 10px; }}
             p {{ color: #a1a1aa; margin: 15px 0; }}
-            .highlight {{ color: #f59e0b; font-weight: 600; }}
-            .button {{ display: inline-block; background-color: #f59e0b; color: #09090b; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
+            .highlight {{ color: {BRAND_ACCENT}; font-weight: 600; }}
+            .button {{ display: inline-block; background-color: {BRAND_ACCENT}; color: {BRAND_ACCENT_TEXT}; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
             .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #27272a; text-align: center; color: #71717a; font-size: 14px; }}
         </style>
     </head>
@@ -172,12 +174,12 @@ async def send_comment_notification_email(
             .container {{ max-width: 600px; margin: 0 auto; background-color: #18181b; border-radius: 8px; padding: 40px; }}
             .header {{ text-align: center; margin-bottom: 30px; }}
             .logo {{ font-size: 28px; font-weight: bold; color: #fff; }}
-            .logo span {{ color: #f59e0b; }}
+            .logo span {{ color: {BRAND_ACCENT}; }}
             h1 {{ color: #fff; font-size: 24px; margin-bottom: 10px; }}
             p {{ color: #a1a1aa; margin: 15px 0; }}
-            .highlight {{ color: #f59e0b; font-weight: 600; }}
-            .comment-box {{ background-color: #27272a; padding: 15px; border-radius: 4px; margin: 20px 0; border-left: 3px solid #f59e0b; }}
-            .button {{ display: inline-block; background-color: #f59e0b; color: #09090b; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
+            .highlight {{ color: {BRAND_ACCENT}; font-weight: 600; }}
+            .comment-box {{ background-color: #27272a; padding: 15px; border-radius: 4px; margin: 20px 0; border-left: 3px solid {BRAND_ACCENT}; }}
+            .button {{ display: inline-block; background-color: {BRAND_ACCENT}; color: {BRAND_ACCENT_TEXT}; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
             .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #27272a; text-align: center; color: #71717a; font-size: 14px; }}
         </style>
     </head>
@@ -217,12 +219,12 @@ async def send_project_completed_email(to: str, name: str, project_title: str):
             .container {{ max-width: 600px; margin: 0 auto; background-color: #18181b; border-radius: 8px; padding: 40px; }}
             .header {{ text-align: center; margin-bottom: 30px; }}
             .logo {{ font-size: 28px; font-weight: bold; color: #fff; }}
-            .logo span {{ color: #f59e0b; }}
+            .logo span {{ color: {BRAND_ACCENT}; }}
             .celebration {{ text-align: center; font-size: 48px; margin: 20px 0; }}
             h1 {{ color: #fff; font-size: 28px; margin-bottom: 10px; text-align: center; }}
             p {{ color: #a1a1aa; margin: 15px 0; text-align: center; }}
-            .highlight {{ color: #22c55e; font-weight: 600; }}
-            .button {{ display: inline-block; background-color: #f59e0b; color: #09090b; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
+            .highlight {{ color: {BRAND_ACCENT}; font-weight: 600; }}
+            .button {{ display: inline-block; background-color: {BRAND_ACCENT}; color: {BRAND_ACCENT_TEXT}; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
             .button-container {{ text-align: center; }}
             .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #27272a; text-align: center; color: #71717a; font-size: 14px; }}
         </style>
