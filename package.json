@@ -1,0 +1,11 @@
+{
+  "name": "mzansibuilds",
+  "private": true,
+  "description": "MzansiBuilds monorepo: npm scripts delegate to the React app in frontend/.",
+  "scripts": {
+    "start": "npm run start --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "test": "npm run test --prefix frontend",
+    "install:frontend": "npm install --prefix frontend"
+  }
+}

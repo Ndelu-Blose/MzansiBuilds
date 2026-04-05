@@ -1,0 +1,164 @@
+{
+  "project_name": "MzansiBuilds",
+  "domain": "Developer Community SaaS App",
+  "theme": "dark",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Dark Mode variant) mixed with Retro-Futurism/Terminal elements",
+  "design_philosophy": {
+    "core_principles": [
+      "Code is Art: Treat data and developer updates with the respect of a portfolio piece.",
+      "Density without Clutter: High information density required for devs, managed via strict grid systems and typographic hierarchy.",
+      "Contrast over Color: Rely on deep blacks (Zinc-950) and stark whites for readability, using Electric Amber exclusively for action and celebration.",
+      "Tactile Terminal: Interfaces should feel like a modern IDE - crisp borders, mono-spaced data points, and glowing active states."
+    ],
+    "anti_patterns": [
+      "No purple or teal green accents.",
+      "No generic 'Inter' for headings.",
+      "No muddy gray backgrounds; use rich, tinted dark neutrals.",
+      "No excessive soft shadows; use 1px solid borders for separation."
+    ]
+  },
+  "typography": {
+    "fonts": {
+      "headings": {
+        "family": "Cabinet Grotesk",
+        "description": "Used for all H1-H4. High personality, stark, and modern.",
+        "fallback": "sans-serif",
+        "weight_strategy": "font-black for impact, font-medium for standard section headers"
+      },
+      "body": {
+        "family": "Manrope",
+        "description": "Clean, highly readable geometric sans for dense activity feeds and comments.",
+        "fallback": "sans-serif"
+      },
+      "mono": {
+        "family": "JetBrains Mono",
+        "description": "CRITICAL: Use for timestamps, code snippets, project status labels, metrics, and overlines.",
+        "fallback": "monospace"
+      }
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter font-black leading-none",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-bold leading-tight",
+      "h3": "text-xl sm:text-2xl font-semibold tracking-tight",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body_large": "text-lg leading-relaxed text-zinc-300",
+      "body_base": "text-base leading-relaxed text-zinc-400",
+      "small_meta": "font-mono text-xs uppercase tracking-[0.2em] text-zinc-500"
+    }
+  },
+  "colors": {
+    "background": {
+      "base": "#09090b",
+      "tailwind": "bg-zinc-950",
+      "description": "Deepest structural background."
+    },
+    "surface": {
+      "card": "#18181b",
+      "tailwind": "bg-zinc-900",
+      "description": "Primary surface for project cards, feed items, and forms."
+    },
+    "surface_elevated": {
+      "base": "#27272a",
+      "tailwind": "bg-zinc-800",
+      "description": "Dropdowns, popovers, and elevated hover states."
+    },
+    "primary": {
+      "base": "#f59e0b",
+      "tailwind": "bg-amber-500 text-zinc-950",
+      "hover": "hover:bg-amber-400",
+      "description": "Primary CTA, active states, 'Build' actions."
+    },
+    "text": {
+      "primary": "#ffffff",
+      "tailwind": "text-white",
+      "secondary": "#a1a1aa",
+      "tailwind_secondary": "text-zinc-400",
+      "tertiary": "#71717a",
+      "tailwind_tertiary": "text-zinc-500"
+    },
+    "borders": {
+      "default": "#27272a",
+      "tailwind": "border-zinc-800",
+      "focus": "ring-2 ring-amber-500/50 outline-none"
+    },
+    "status": {
+      "completed": "text-green-400 bg-green-400/10 border border-green-400/20",
+      "in_progress": "text-amber-400 bg-amber-400/10 border border-amber-400/20",
+      "idea": "text-blue-400 bg-blue-400/10 border border-blue-400/20",
+      "planning": "text-zinc-300 bg-zinc-800 border border-zinc-700"
+    }
+  },
+  "layout_and_spacing": {
+    "spacing_system": "Use generous spacing (p-6, p-8) within cards. Use tight gaps (gap-4) for data density.",
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "grids": {
+      "dashboard": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6. Dashboards must fill vertical space.",
+      "activity_feed": "grid-cols-1 max-w-2xl mx-auto gap-8 (Single column layout to focus on timeline storytelling).",
+      "celebration_wall": "grid-cols-1 md:grid-cols-8 lg:grid-cols-12 gap-8 (Mode A: Tetris Grid for artful display)."
+    },
+    "borders_and_radius": {
+      "radius": "rounded-none or rounded-sm (max 4px). Emphasize sharp, technical edges.",
+      "strategy": "Use 1px borders heavily (border-zinc-800) to create 'Grid Borders' tech look."
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-amber-500 text-zinc-950 font-semibold px-6 py-2.5 rounded-sm hover:bg-amber-400 transition-colors focus:ring-2 focus:ring-amber-500/50",
+      "secondary": "bg-transparent text-white border border-zinc-700 px-6 py-2.5 rounded-sm hover:border-zinc-500 hover:bg-zinc-800 transition-colors",
+      "ghost": "text-zinc-400 hover:text-white hover:bg-zinc-800 px-4 py-2 rounded-sm transition-colors"
+    },
+    "cards": {
+      "project_card": "bg-zinc-900 border border-zinc-800 p-6 rounded-sm hover:-translate-y-1 hover:border-amber-500/50 transition-all duration-300",
+      "feed_item": "bg-transparent border-b border-zinc-800 py-6 pl-4 border-l-2 border-l-zinc-800 hover:border-l-amber-500 transition-colors"
+    },
+    "inputs": {
+      "default": "bg-zinc-950 border border-zinc-800 text-white rounded-sm px-4 py-2 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all placeholder:text-zinc-600"
+    },
+    "header": {
+      "style": "sticky top-0 z-50 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800",
+      "nav_links": "text-sm font-medium text-zinc-400 hover:text-white transition-colors"
+    },
+    "badges": {
+      "style": "font-mono text-xs px-2.5 py-0.5 rounded-sm uppercase tracking-wider"
+    }
+  },
+  "media_and_assets": {
+    "hero_background": {
+      "url": "/images/hero-landing.png",
+      "description": "Abstract dev network background for landing page hero. Apply a bg-zinc-950/80 overlay to ensure text readability."
+    },
+    "celebration_wall_background": {
+      "url": "/images/hero-celebration.png",
+      "description": "Vibrant glowing geometric confetti. Use as a subtle parallax background for the Celebration Wall section."
+    },
+    "tech_surface_accent": {
+      "url": "/images/hero-login.png",
+      "description": "Use for prominent call-to-action sections or login/auth split screen backgrounds."
+    },
+    "abstract_terminal_code": {
+      "url": "https://images.unsplash.com/photo-1762242298589-582f5f6c3fb1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGNvZGUlMjB0ZXJtaW5hbHxlbnwwfHx8fDE3NzUxMzM2MTJ8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Fallback image for projects without custom covers or for developer profiles."
+    },
+    "icons": {
+      "library": "lucide-react",
+      "strategy": "Use purely structural icons. Stroke width 1.5. No fill."
+    }
+  },
+  "interactions_and_motion": {
+    "hover_states": "All interactive elements must explicitly define hover color and background. Cards elevate slightly (-translate-y-1).",
+    "transitions": "Use 'transition-all duration-200 ease-in-out' globally.",
+    "feed_animations": "Stagger entrance of feed items on scroll using Framer Motion.",
+    "celebration_effect": "Completed projects should feature a subtle 'Tracing Beam' or glowing border effect using Framer Motion."
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure all text against dark surfaces meets minimum 4.5:1 ratio.",
+    "data_testid": "CRITICAL: All interactive elements (buttons, inputs, links, tabs, cards) MUST have a kebab-case data-testid attribute mapped to their role.",
+    "focus_rings": "Keyboard navigation must be visible. Use 'focus-visible:ring-2 focus-visible:ring-amber-500'."
+  },
+  "implementation_instructions": {
+    "step_1": "Configure Tailwind config with extended colors (Zinc/Amber), fonts (Cabinet Grotesk, Manrope, JetBrains Mono), and sharp border radii.",
+    "step_2": "Build standard Shadcn UI components but strip rounding (rounded-sm) and update default borders to border-zinc-800.",
+    "step_3": "Implement Layouts: Dashboard grid, single-column Activity Feed with left border timeline, and asymmetric grid for Celebration Wall.",
+    "step_4": "Integrate background media URLs into sections with appropriate opacity overlays to maintain contrast."
+  }
+}

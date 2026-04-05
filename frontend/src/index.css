@@ -1,0 +1,145 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 7%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 7%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 38 92% 50%;
+    --primary-foreground: 240 10% 3.9%;
+    --secondary: 240 5% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 5% 14.9%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 5% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5% 14.9%;
+    --input: 240 5% 14.9%;
+    --ring: 38 92% 50%;
+    --radius: 0.25rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Manrope', sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Manrope', sans-serif;
+  }
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(240, 10%, 3.9%);
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(240, 5%, 14.9%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(240, 5%, 25%);
+}
+
+/* Selection */
+::selection {
+  background: hsl(38, 92%, 50%);
+  color: hsl(240, 10%, 3.9%);
+}
+
+/* Project card hover effect */
+.project-card {
+  @apply transition-all duration-300;
+}
+
+.project-card:hover {
+  transform: translateY(-4px);
+  border-color: hsl(38, 92%, 50%, 0.5);
+}
+
+/* Feed item hover */
+.feed-item {
+  @apply transition-colors duration-200;
+}
+
+.feed-item:hover {
+  border-left-color: hsl(38, 92%, 50%);
+}
+
+/* Status badges */
+.badge-idea {
+  @apply text-blue-400 bg-blue-400/10 border border-blue-400/20;
+}
+
+.badge-planning {
+  @apply text-zinc-300 bg-zinc-800 border border-zinc-700;
+}
+
+.badge-in_progress {
+  @apply text-amber-400 bg-amber-400/10 border border-amber-400/20;
+}
+
+.badge-testing {
+  @apply text-purple-400 bg-purple-400/10 border border-purple-400/20;
+}
+
+.badge-completed {
+  @apply text-green-400 bg-green-400/10 border border-green-400/20;
+}
+
+/* Gradient text */
+.gradient-text {
+  @apply bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent;
+}
+
+/* Glass effect */
+.glass {
+  @apply bg-zinc-950/80 backdrop-blur-xl;
+}
+
+/* Focus styles */
+.focus-amber:focus {
+  @apply ring-2 ring-amber-500/50 outline-none;
+}
+
+/* Animation keyframes */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+}
+
+.pulse-amber {
+  animation: pulse-amber 2s infinite;
+}
