@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { projectsAPI, collaborationAPI } from '../lib/api';
 import { 
   Plus, FolderKanban, Trophy, Users, ChevronRight, 
-  Loader2, ExternalLink, CheckCircle, Clock, Zap
+  Loader2, ExternalLink, Zap
 } from 'lucide-react';
 import Layout from '../components/Layout';
 import ProjectCard from '../components/ProjectCard';
 import CreateProjectModal from '../components/CreateProjectModal';
+import { Button } from '@/components/ui/button';
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -64,7 +65,7 @@ export default function DashboardPage() {
     return (
       <Layout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
         </div>
       </Layout>
     );
@@ -75,50 +76,50 @@ export default function DashboardPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="dashboard">
         {/* Welcome Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white tracking-tight">
-            Welcome back, <span className="text-amber-500">{user?.name || user?.email?.split('@')[0]}</span>
+          <h1 className="text-3xl font-bold text-foreground tracking-tight">
+            Welcome back, <span className="text-primary">{user?.name || user?.email?.split('@')[0]}</span>
           </h1>
-          <p className="text-zinc-400 mt-1">Here's what's happening with your projects</p>
+          <p className="text-muted-foreground mt-1">Here's what's happening with your projects</p>
         </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-sm">
+          <div className="bg-card border border-border p-4 rounded-xl shadow-card">
             <div className="flex items-center gap-3">
-              <FolderKanban className="w-5 h-5 text-zinc-400" />
+              <FolderKanban className="w-5 h-5 text-muted-foreground" />
               <div>
-                <p className="font-mono text-2xl font-bold text-white">{stats.total}</p>
-                <p className="text-xs text-zinc-500 uppercase tracking-wider">Projects</p>
+                <p className="font-mono text-2xl font-bold text-foreground">{stats.total}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Projects</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-sm">
+          <div className="bg-card border border-border p-4 rounded-xl shadow-card">
             <div className="flex items-center gap-3">
-              <Zap className="w-5 h-5 text-amber-400" />
+              <Zap className="w-5 h-5 text-primary" />
               <div>
-                <p className="font-mono text-2xl font-bold text-white">{stats.inProgress}</p>
-                <p className="text-xs text-zinc-500 uppercase tracking-wider">In Progress</p>
+                <p className="font-mono text-2xl font-bold text-foreground">{stats.inProgress}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">In Progress</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-sm">
+          <div className="bg-card border border-border p-4 rounded-xl shadow-card">
             <div className="flex items-center gap-3">
-              <Trophy className="w-5 h-5 text-green-400" />
+              <Trophy className="w-5 h-5 text-primary" />
               <div>
-                <p className="font-mono text-2xl font-bold text-white">{stats.completed}</p>
-                <p className="text-xs text-zinc-500 uppercase tracking-wider">Completed</p>
+                <p className="font-mono text-2xl font-bold text-foreground">{stats.completed}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed</p>
               </div>
             </div>
           </div>
 
-          <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-sm">
+          <div className="bg-card border border-border p-4 rounded-xl shadow-card">
             <div className="flex items-center gap-3">
-              <Users className="w-5 h-5 text-blue-400" />
+              <Users className="w-5 h-5 text-muted-foreground" />
               <div>
-                <p className="font-mono text-2xl font-bold text-white">{stats.pendingCollabs}</p>
-                <p className="text-xs text-zinc-500 uppercase tracking-wider">Collab Requests</p>
+                <p className="font-mono text-2xl font-bold text-foreground">{stats.pendingCollabs}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Collab Requests</p>
               </div>
             </div>
           </div>
@@ -129,30 +130,22 @@ export default function DashboardPage() {
           {/* Projects Section */}
           <div className="lg:col-span-2">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-white">Your Projects</h2>
-              <button
-                onClick={() => setShowCreateModal(true)}
-                className="bg-amber-500 text-zinc-950 font-semibold px-4 py-2 rounded-sm hover:bg-amber-400 transition-colors flex items-center gap-2"
-                data-testid="create-project-btn"
-              >
+              <h2 className="text-xl font-semibold text-foreground">Your Projects</h2>
+              <Button onClick={() => setShowCreateModal(true)} data-testid="create-project-btn">
                 <Plus className="w-4 h-4" />
                 New Project
-              </button>
+              </Button>
             </div>
 
             {projects.length === 0 ? (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-sm p-12 text-center">
-                <FolderKanban className="w-12 h-12 text-zinc-600 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-white mb-2">No projects yet</h3>
-                <p className="text-zinc-400 mb-6">Start building in public by creating your first project</p>
-                <button
-                  onClick={() => setShowCreateModal(true)}
-                  className="bg-amber-500 text-zinc-950 font-semibold px-6 py-2 rounded-sm hover:bg-amber-400 transition-colors inline-flex items-center gap-2"
-                  data-testid="empty-create-project-btn"
-                >
+              <div className="bg-card border border-border rounded-xl shadow-card p-12 text-center">
+                <FolderKanban className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-foreground mb-2">No projects yet</h3>
+                <p className="text-muted-foreground mb-6">Start building in public by creating your first project</p>
+                <Button onClick={() => setShowCreateModal(true)} data-testid="empty-create-project-btn">
                   <Plus className="w-4 h-4" />
                   Create Project
-                </button>
+                </Button>
               </div>
             ) : (
               <div className="space-y-4">
@@ -160,9 +153,9 @@ export default function DashboardPage() {
                   <ProjectCard key={project.id} project={project} showOwner={false} />
                 ))}
                 {projects.length > 5 && (
-                  <Link 
-                    to="/my-projects" 
-                    className="block text-center text-amber-500 hover:text-amber-400 py-2"
+                  <Link
+                    to="/my-projects"
+                    className="block text-center text-primary hover:text-primary-hover py-2 text-sm font-medium"
                   >
                     View all {projects.length} projects
                   </Link>
@@ -174,32 +167,32 @@ export default function DashboardPage() {
           {/* Sidebar */}
           <div className="space-y-6">
             {/* Collaboration Requests */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-sm p-6">
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-white">Collaboration Requests</h3>
+                <h3 className="font-semibold text-foreground">Collaboration Requests</h3>
                 {collabRequests.length > 0 && (
-                  <span className="bg-amber-500/20 text-amber-500 text-xs font-mono px-2 py-0.5 rounded-sm">
+                  <span className="bg-accent text-primary text-xs font-mono px-2 py-0.5 rounded-md border border-border">
                     {collabRequests.length}
                   </span>
                 )}
               </div>
 
               {collabRequests.length === 0 ? (
-                <p className="text-zinc-500 text-sm">No pending requests</p>
+                <p className="text-muted-foreground text-sm">No pending requests</p>
               ) : (
                 <div className="space-y-3">
-                  {collabRequests.slice(0, 3).map(request => (
-                    <div key={request.id} className="border-b border-zinc-800 pb-3 last:border-0 last:pb-0">
-                      <p className="text-sm text-white font-medium">{request.requester?.name || 'Unknown'}</p>
-                      <p className="text-xs text-zinc-500">
-                        wants to join <span className="text-amber-500">{request.project_title}</span>
+                  {collabRequests.slice(0, 3).map((request) => (
+                    <div key={request.id} className="border-b border-border pb-3 last:border-0 last:pb-0">
+                      <p className="text-sm text-foreground font-medium">{request.requester?.name || 'Unknown'}</p>
+                      <p className="text-xs text-muted-foreground">
+                        wants to join <span className="text-primary font-medium">{request.project_title}</span>
                       </p>
                     </div>
                   ))}
                   {collabRequests.length > 3 && (
-                    <Link 
-                      to="/collaboration-requests" 
-                      className="text-amber-500 text-sm hover:text-amber-400 flex items-center gap-1"
+                    <Link
+                      to="/collaboration-requests"
+                      className="text-primary text-sm hover:text-primary-hover flex items-center gap-1 font-medium"
                     >
                       View all <ChevronRight className="w-4 h-4" />
                     </Link>
@@ -208,43 +201,60 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {/* Quick Actions */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-sm p-6">
-              <h3 className="font-semibold text-white mb-4">Quick Actions</h3>
-              <div className="space-y-2">
-                <Link 
-                  to="/feed" 
-                  className="flex items-center justify-between text-zinc-400 hover:text-white transition-colors py-2"
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <h3 className="font-semibold text-foreground mb-4">Quick Actions</h3>
+              <div className="space-y-1">
+                <NavLink
+                  to="/feed"
+                  className={({ isActive }) =>
+                    `flex items-center justify-between rounded-md px-3 py-2.5 text-sm transition-colors border-l-4 ${
+                      isActive
+                        ? 'bg-accent text-foreground border-primary'
+                        : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'
+                    }`
+                  }
                   data-testid="view-feed-link"
                 >
                   <span className="flex items-center gap-2">
                     <ExternalLink className="w-4 h-4" />
                     View Feed
                   </span>
-                  <ChevronRight className="w-4 h-4" />
-                </Link>
-                <Link 
-                  to="/celebration" 
-                  className="flex items-center justify-between text-zinc-400 hover:text-white transition-colors py-2"
+                  <ChevronRight className="w-4 h-4 shrink-0" />
+                </NavLink>
+                <NavLink
+                  to="/celebration"
+                  className={({ isActive }) =>
+                    `flex items-center justify-between rounded-md px-3 py-2.5 text-sm transition-colors border-l-4 ${
+                      isActive
+                        ? 'bg-accent text-foreground border-primary'
+                        : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'
+                    }`
+                  }
                   data-testid="view-celebration-link"
                 >
                   <span className="flex items-center gap-2">
                     <Trophy className="w-4 h-4" />
                     Celebration Wall
                   </span>
-                  <ChevronRight className="w-4 h-4" />
-                </Link>
-                <Link 
-                  to="/profile" 
-                  className="flex items-center justify-between text-zinc-400 hover:text-white transition-colors py-2"
+                  <ChevronRight className="w-4 h-4 shrink-0" />
+                </NavLink>
+                <NavLink
+                  to="/profile"
+                  className={({ isActive }) =>
+                    `flex items-center justify-between rounded-md px-3 py-2.5 text-sm transition-colors border-l-4 ${
+                      isActive
+                        ? 'bg-accent text-foreground border-primary'
+                        : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'
+                    }`
+                  }
                   data-testid="edit-profile-link"
                 >
                   <span className="flex items-center gap-2">
                     <Users className="w-4 h-4" />
                     Edit Profile
                   </span>
-                  <ChevronRight className="w-4 h-4" />
-                </Link>
+                  <ChevronRight className="w-4 h-4 shrink-0" />
+                </NavLink>
               </div>
             </div>
           </div>

@@ -3,6 +3,7 @@ import { feedAPI } from '../lib/api';
 import { Loader2, RefreshCw, Rss } from 'lucide-react';
 import Layout from '../components/Layout';
 import FeedItem from '../components/FeedItem';
+import { Button } from '@/components/ui/button';
 
 export default function FeedPage() {
   const [feedItems, setFeedItems] = useState([]);
@@ -16,37 +17,40 @@ export default function FeedPage() {
     offsetRef.current = offset;
   }, [offset]);
 
-  const fetchFeed = useCallback(async (loadMore = false) => {
-    try {
-      if (loadMore) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
-      }
+  const fetchFeed = useCallback(
+    async (loadMore = false) => {
+      try {
+        if (loadMore) {
+          setLoadingMore(true);
+        } else {
+          setLoading(true);
+        }
 
-      const currentOffset = loadMore ? offsetRef.current : 0;
-      const response = await feedAPI.get({ limit, offset: currentOffset });
-      const items = response.data.items || [];
+        const currentOffset = loadMore ? offsetRef.current : 0;
+        const response = await feedAPI.get({ limit, offset: currentOffset });
+        const items = response.data.items || [];
 
-      if (loadMore) {
-        setFeedItems(prev => [...prev, ...items]);
-      } else {
-        setFeedItems(items);
-      }
+        if (loadMore) {
+          setFeedItems((prev) => [...prev, ...items]);
+        } else {
+          setFeedItems(items);
+        }
 
-      setHasMore(items.length === limit);
-      if (loadMore) {
-        setOffset(currentOffset + limit);
-      } else {
-        setOffset(limit);
+        setHasMore(items.length === limit);
+        if (loadMore) {
+          setOffset(currentOffset + limit);
+        } else {
+          setOffset(limit);
+        }
+      } catch (error) {
+        console.error('Error fetching feed:', error);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
       }
-    } catch (error) {
-      console.error('Error fetching feed:', error);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, [limit]);
+    },
+    [limit]
+  );
 
   useEffect(() => {
     fetchFeed(false);
@@ -61,7 +65,7 @@ export default function FeedPage() {
     return (
       <Layout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
         </div>
       </Layout>
     );
@@ -70,32 +74,30 @@ export default function FeedPage() {
   return (
     <Layout>
       <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="feed-page">
-        {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-white tracking-tight flex items-center gap-3">
-              <Rss className="w-8 h-8 text-amber-500" />
+            <h1 className="text-3xl font-bold text-foreground tracking-tight flex items-center gap-3">
+              <Rss className="w-8 h-8 text-primary" />
               Activity Feed
             </h1>
-            <p className="text-zinc-400 mt-1">Latest updates from the community</p>
+            <p className="text-muted-foreground mt-1">Latest updates from the community</p>
           </div>
           <button
+            type="button"
             onClick={handleRefresh}
-            className="text-zinc-400 hover:text-white transition-colors p-2"
+            className="text-muted-foreground hover:text-foreground transition-colors p-2 rounded-md hover:bg-muted"
             data-testid="refresh-feed-btn"
+            aria-label="Refresh feed"
           >
             <RefreshCw className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Feed Items */}
         {feedItems.length === 0 ? (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-sm p-12 text-center">
-            <Rss className="w-12 h-12 text-zinc-600 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-white mb-2">No updates yet</h3>
-            <p className="text-zinc-400">
-              Be the first to share an update on your project
-            </p>
+          <div className="bg-card border border-border rounded-xl shadow-card p-12 text-center">
+            <Rss className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-foreground mb-2">No updates yet</h3>
+            <p className="text-muted-foreground">Be the first to share an update on your project</p>
           </div>
         ) : (
           <div className="space-y-1">
@@ -105,18 +107,14 @@ export default function FeedPage() {
 
             {hasMore && (
               <div className="pt-8 text-center">
-                <button
+                <Button
+                  variant="outline"
                   onClick={() => fetchFeed(true)}
                   disabled={loadingMore}
-                  className="bg-transparent text-white border border-zinc-700 px-6 py-2 rounded-sm hover:border-zinc-500 hover:bg-zinc-800 transition-colors disabled:opacity-50"
                   data-testid="load-more-btn"
                 >
-                  {loadingMore ? (
-                    <Loader2 className="w-4 h-4 animate-spin mx-auto" />
-                  ) : (
-                    'Load More'
-                  )}
-                </button>
+                  {loadingMore ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Load More'}
+                </Button>
               </div>
             )}
           </div>

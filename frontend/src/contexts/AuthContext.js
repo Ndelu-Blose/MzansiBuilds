@@ -36,7 +36,8 @@ export function AuthProvider({ children }) {
         email: supabaseUser.email,
         name: supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')[0],
         picture: supabaseUser.user_metadata?.avatar_url || supabaseUser.user_metadata?.picture,
-        provider: supabaseUser.app_metadata?.provider || 'email'
+        provider: supabaseUser.app_metadata?.provider || 'email',
+        email_confirmed_at: supabaseUser.email_confirmed_at ?? null,
       }, {
         headers: {
           'Authorization': `Bearer ${accessToken}`
@@ -82,20 +83,43 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe();
   }, [syncUserWithBackend]);
 
+  const getAuthRedirectOrigin = () =>
+    typeof window !== 'undefined' ? window.location.origin : '';
+
   // Email/Password Sign Up via Supabase
   const register = async (email, password, name) => {
+    const origin = getAuthRedirectOrigin();
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
-          full_name: name
-        }
-      }
+          full_name: name,
+        },
+        emailRedirectTo: origin ? `${origin}/auth/confirmed` : undefined,
+      },
     });
-    
+
     if (error) throw error;
     return data;
+  };
+
+  const resendSignupConfirmation = async (email) => {
+    const origin = getAuthRedirectOrigin();
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email,
+      options: origin ? { emailRedirectTo: `${origin}/auth/confirmed` } : undefined,
+    });
+    if (error) throw error;
+  };
+
+  const requestPasswordReset = async (email) => {
+    const origin = getAuthRedirectOrigin();
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: origin ? `${origin}/auth/reset-password` : undefined,
+    });
+    if (error) throw error;
   };
 
   // Email/Password Sign In - Try Supabase first, fallback to legacy backend
@@ -105,11 +129,19 @@ export function AuthProvider({ children }) {
       email,
       password
     });
-    
+
+    if (error) {
+      const code = error.code || '';
+      const msg = (error.message || '').toLowerCase();
+      if (code === 'email_not_confirmed' || msg.includes('email not confirmed')) {
+        throw error;
+      }
+    }
+
     if (!error && data?.session) {
       return data;
     }
-    
+
     // If Supabase fails, try legacy backend auth
     try {
       const response = await axios.post(`${API_URL}/api/auth/login`, {
@@ -168,7 +200,7 @@ export function AuthProvider({ children }) {
     // Also logout from backend (for legacy sessions)
     try {
       await axios.post(`${API_URL}/api/auth/logout`, {}, { withCredentials: true });
-    } catch (error) {
+    } catch (_error) {
       // Ignore logout errors
     }
     
@@ -188,11 +220,13 @@ export function AuthProvider({ children }) {
     loading,
     login,
     register,
+    resendSignupConfirmation,
+    requestPasswordReset,
     logout,
     loginWithGoogle,
     loginWithGitHub,
     getAccessToken,
-    isAuthenticated: !!(session?.user || user)
+    isAuthenticated: !!(session?.user || user),
   };
 
   return (

@@ -7,6 +7,8 @@ import ProtectedRoute from './components/ProtectedRoute';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import AuthCallback from './pages/AuthCallback';
+import EmailConfirmedPage from './pages/EmailConfirmedPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import FeedPage from './pages/FeedPage';
 import CelebrationPage from './pages/CelebrationPage';
@@ -25,6 +27,8 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route path="/auth/confirmed" element={<EmailConfirmedPage />} />
+          <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
           <Route path="/feed" element={<FeedPage />} />
           <Route path="/celebration" element={<CelebrationPage />} />
           <Route path="/explore" element={<ExplorePage />} />
