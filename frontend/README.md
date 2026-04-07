@@ -28,13 +28,18 @@ Sign-in uses **Supabase Auth** (`signInWithOAuth` in `src/contexts/AuthContext.j
 1. **Supabase (required)**  
    - **Authentication → Providers:** enable **Google** and **GitHub**.  
    - Paste the **Client ID** and **Client secret** from Google Cloud and GitHub (see below).  
-   - **Authentication → URL configuration:** set **Site URL** (e.g. `http://localhost:3000` for dev) and **Redirect URLs** to include your app callback, e.g. `http://localhost:3000/auth/callback` and production URLs. Use the **exact port** your dev server prints (3000, 3001, …).
+   - **Authentication → URL configuration:** set **Site URL** (e.g. `http://localhost:3000` for dev) and **Redirect URLs** to include (use the **exact** origin and port your dev server prints):
+     - `http://localhost:3000/auth/callback` (OAuth return)
+     - `http://localhost:3000/auth/confirmed` (email confirmation after the user clicks the link in their inbox)
+     - `http://localhost:3000/auth/reset-password` (password reset after the user clicks the reset link)
+     Add the same three paths for **production** (HTTPS) in Supabase. Without these, confirm/reset links may fall back to the wrong URL or be rejected.
+   - **Email templates:** In **Authentication → Email Templates**, set **From name** (e.g. `MzansiBuilds`), subjects (e.g. “Confirm your MzansiBuilds account”), and HTML so messages match your product. Do not remove Supabase link placeholders (`{{ .ConfirmationURL }}`, etc.). Optional: configure **SMTP** (e.g. Resend) under **Authentication** for a custom **From** domain.
 
 2. **Google Cloud Console**  
    - Create or use an **OAuth 2.0 Client ID** (Web application).  
    - **Authorized redirect URIs** must include Supabase’s callback (usually `https://<project-ref>.supabase.co/auth/v1/callback`). Store it in **`REACT_APP_GOOGLE_OAUTH_CALLBACK_URL`** in `.env.local` for reference; the app derives the same URL from `REACT_APP_SUPABASE_URL` if you omit it. Use `getGoogleOAuthCallbackUrl()` in `src/lib/supabase.js` if you need it in code.
 
-3. **GitHub → Settings → Developer settings → OAuth Apps**  
+3. **GitHub → Settings → Developer settings → OAuth Apps**    
    - Set **Authorization callback URL** to the same Supabase callback (`https://<project-ref>.supabase.co/auth/v1/callback`). Optional env: **`REACT_APP_GITHUB_OAUTH_CALLBACK_URL`**. Use `getGithubOAuthCallbackUrl()` from `src/lib/supabase.js` if you need it in code.
 
 **Frontend env:** `REACT_APP_SUPABASE_URL` and `REACT_APP_SUPABASE_ANON_KEY` in `frontend/.env.local` must match this Supabase project. Restart `npm start` after env changes.

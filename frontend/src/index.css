@@ -6,26 +6,44 @@
 
 @layer base {
   :root {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 7%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 7%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 38 92% 50%;
-    --primary-foreground: 240 10% 3.9%;
-    --secondary: 240 5% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 5% 14.9%;
-    --muted-foreground: 240 5% 65%;
-    --accent: 240 5% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5% 14.9%;
-    --input: 240 5% 14.9%;
-    --ring: 38 92% 50%;
-    --radius: 0.25rem;
+    /* Core surfaces */
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Brand green */
+    --primary: 142 71% 45%;
+    --primary-hover: 142 72% 36%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    /* Mint accent (chips, soft hovers) */
+    --accent: 141 79% 93%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 142 71% 45%;
+
+    --radius: 0.5rem;
+
+    --chart-1: 142 71% 45%;
+    --chart-2: 142 72% 36%;
+    --chart-3: 215 16% 47%;
+    --chart-4: 141 79% 85%;
+    --chart-5: 222 47% 35%;
+
+    --shadow-card: 0 1px 3px 0 rgb(15 23 42 / 0.06), 0 1px 2px -1px rgb(15 23 42 / 0.06);
   }
 }
 
@@ -45,39 +63,39 @@
   }
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar — light theme */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: hsl(240, 10%, 3.9%);
+  background: hsl(var(--muted));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(240, 5%, 14.9%);
+  background: hsl(var(--border));
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(240, 5%, 25%);
+  background: hsl(215 16% 70%);
 }
 
-/* Selection */
 ::selection {
-  background: hsl(38, 92%, 50%);
-  color: hsl(240, 10%, 3.9%);
+  background: hsl(var(--primary) / 0.25);
+  color: hsl(var(--foreground));
 }
 
-/* Project card hover effect */
+/* Project card hover */
 .project-card {
   @apply transition-all duration-300;
 }
 
 .project-card:hover {
   transform: translateY(-4px);
-  border-color: hsl(38, 92%, 50%, 0.5);
+  border-color: hsl(var(--primary) / 0.45);
+  box-shadow: var(--shadow-card);
 }
 
 /* Feed item hover */
@@ -86,60 +104,64 @@
 }
 
 .feed-item:hover {
-  border-left-color: hsl(38, 92%, 50%);
+  border-left-color: hsl(var(--primary));
 }
 
-/* Status badges */
+/* Stage badges — light surfaces */
 .badge-idea {
-  @apply text-blue-400 bg-blue-400/10 border border-blue-400/20;
+  @apply text-blue-700 bg-blue-50 border border-blue-200;
 }
 
 .badge-planning {
-  @apply text-zinc-300 bg-zinc-800 border border-zinc-700;
+  @apply text-slate-700 bg-slate-100 border border-slate-200;
 }
 
 .badge-in_progress {
-  @apply text-amber-400 bg-amber-400/10 border border-amber-400/20;
+  @apply text-amber-800 bg-amber-50 border border-amber-200;
 }
 
 .badge-testing {
-  @apply text-purple-400 bg-purple-400/10 border border-purple-400/20;
+  @apply text-purple-800 bg-purple-50 border border-purple-200;
 }
 
 .badge-completed {
-  @apply text-green-400 bg-green-400/10 border border-green-400/20;
+  @apply text-emerald-800 bg-emerald-50 border border-emerald-200;
 }
 
-/* Gradient text */
+/* Brand gradient text */
 .gradient-text {
-  @apply bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent;
+  @apply bg-gradient-to-r from-primary to-[hsl(var(--primary-hover))] bg-clip-text text-transparent;
 }
 
-/* Glass effect */
+/* Subtle brand gradient (CTAs / accent bars) */
+.gradient-brand {
+  background: linear-gradient(to right, #22c55e, #16a34a);
+}
+
+/* Glass — light header scrims */
 .glass {
-  @apply bg-zinc-950/80 backdrop-blur-xl;
+  @apply bg-background/85 backdrop-blur-xl;
 }
 
-/* Focus styles */
-.focus-amber:focus {
-  @apply ring-2 ring-amber-500/50 outline-none;
-}
-
-/* Animation keyframes */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+/* Focus — green ring */
+.focus-brand:focus {
+  @apply ring-2 ring-ring/40 ring-offset-2 ring-offset-background outline-none;
 }
 
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out forwards;
 }
 
-@keyframes pulse-amber {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-.pulse-amber {
-  animation: pulse-amber 2s infinite;
+@keyframes pulse-brand {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.35); }
+  50% { box-shadow: 0 0 0 8px hsl(var(--primary) / 0); }
+}
+
+.pulse-brand {
+  animation: pulse-brand 2s infinite;
 }

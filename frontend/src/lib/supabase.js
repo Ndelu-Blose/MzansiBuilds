@@ -54,7 +54,6 @@ function createUnconfiguredDevAuthStub() {
     return e;
   };
 
-  // eslint-disable-next-line no-console -- intentional dev-only warning
   console.warn(`[MzansiBuilds] ${notConfiguredMsg}`);
 
   return {
@@ -75,6 +74,18 @@ function createUnconfiguredDevAuthStub() {
       },
       signUp: async () => ({
         data: { user: null, session: null },
+        error: err(notConfiguredMsg),
+      }),
+      resend: async () => ({
+        data: {},
+        error: err(notConfiguredMsg),
+      }),
+      resetPasswordForEmail: async () => ({
+        data: {},
+        error: err(notConfiguredMsg),
+      }),
+      updateUser: async () => ({
+        data: { user: null },
         error: err(notConfiguredMsg),
       }),
       signInWithPassword: async () => ({

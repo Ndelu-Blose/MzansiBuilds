@@ -1,3 +1,11 @@
+import { clsx } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+/** Merge Tailwind classes (shadcn/ui). */
+export function cn(...inputs) {
+  return twMerge(clsx(inputs));
+}
+
 // Utility function to format relative time
 export function formatRelativeTime(dateStr) {
   const date = new Date(dateStr);

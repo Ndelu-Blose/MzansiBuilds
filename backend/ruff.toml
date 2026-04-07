@@ -1,0 +1,8 @@
+target-version = "py312"
+line-length = 120
+# server.py uses load_dotenv before imports; lint focused on shared modules + tests
+exclude = [".venv", "__pycache__", "server.py"]
+
+[lint]
+# Match flake8: allow long lines in large modules
+ignore = ["E501"]

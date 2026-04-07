@@ -1,0 +1,10 @@
+# Not needed for the static CRA build; keeps uploads smaller
+backend/
+tests/
+docs/
+memory/
+test_reports/
+backend_test.py
+enhanced_backend_test.py
+design_guidelines.json
+test_result.md

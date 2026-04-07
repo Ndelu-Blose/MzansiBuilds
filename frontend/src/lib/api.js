@@ -20,7 +20,7 @@ api.interceptors.request.use(async (config) => {
       config.headers.Authorization = `Bearer ${session.access_token}`;
     }
     // Note: If no Supabase session, cookies will handle legacy auth
-  } catch (error) {
+  } catch (_error) {
     // Supabase error - continue without token, cookies may work
     console.debug('No Supabase session, using cookies');
   }

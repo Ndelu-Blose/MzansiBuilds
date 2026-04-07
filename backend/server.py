@@ -500,7 +500,8 @@ async def sync_supabase_user(request: Request, background_tasks: BackgroundTasks
     name = body.get("name")
     picture = body.get("picture")
     provider = body.get("provider", "email")
-    
+    email_confirmed_at = body.get("email_confirmed_at")
+
     if not email:
         raise HTTPException(status_code=400, detail="Email is required")
     
@@ -549,10 +550,14 @@ async def sync_supabase_user(request: Request, background_tasks: BackgroundTasks
             user.auth_provider = provider
         await db.commit()
     
-    # Send welcome email for new users
+    # Product welcome via Resend: only after verified email for password signups; OAuth emails are provider-verified
     if is_new_user:
-        background_tasks.add_task(send_welcome_email, email, name or email.split("@")[0])
-    
+        p = (provider or "email").lower()
+        oauth_provider = p not in ("email",)
+        email_verified = bool(email_confirmed_at)
+        if oauth_provider or email_verified:
+            background_tasks.add_task(send_welcome_email, email, name or email.split("@")[0])
+
     return {"user": user_to_response(user), "message": "User synced successfully", "is_new": is_new_user}
 
 
@@ -1380,21 +1385,28 @@ async def startup():
             await db.commit()
             logger.info(f"Admin password updated: {admin_email}")
         
-        # Write credentials to file
-        os.makedirs("/app/memory", exist_ok=True)
-        with open("/app/memory/test_credentials.md", "w") as f:
-            f.write("# Test Credentials\n\n")
-            f.write("## Admin Account\n")
-            f.write(f"- Email: {admin_email}\n")
-            f.write(f"- Password: {admin_password}\n")
-            f.write("- Role: admin\n\n")
-            f.write("## Auth Endpoints\n")
-            f.write("- POST /api/auth/register\n")
-            f.write("- POST /api/auth/login\n")
-            f.write("- POST /api/auth/logout\n")
-            f.write("- GET /api/auth/me\n")
-            f.write("- POST /api/auth/refresh\n")
-            f.write("- POST /api/auth/google/session\n")
+        # Write credentials to file (optional; skip in CI or when path is not writable)
+        skip_file = os.environ.get("SKIP_ADMIN_CREDENTIALS_FILE", "").lower() in ("1", "true", "yes")
+        if not skip_file:
+            creds_dir = os.environ.get("ADMIN_CREDENTIALS_DIR", "/app/memory")
+            creds_path = os.path.join(creds_dir, "test_credentials.md")
+            try:
+                os.makedirs(creds_dir, exist_ok=True)
+                with open(creds_path, "w") as f:
+                    f.write("# Test Credentials\n\n")
+                    f.write("## Admin Account\n")
+                    f.write(f"- Email: {admin_email}\n")
+                    f.write(f"- Password: {admin_password}\n")
+                    f.write("- Role: admin\n\n")
+                    f.write("## Auth Endpoints\n")
+                    f.write("- POST /api/auth/register\n")
+                    f.write("- POST /api/auth/login\n")
+                    f.write("- POST /api/auth/logout\n")
+                    f.write("- GET /api/auth/me\n")
+                    f.write("- POST /api/auth/refresh\n")
+                    f.write("- POST /api/auth/google/session\n")
+            except OSError as e:
+                logger.warning("Could not write admin credentials file to %s: %s", creds_path, e)
 
 
 @app.on_event("shutdown")

@@ -2,13 +2,17 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { projectsAPI, updatesAPI, milestonesAPI, commentsAPI, collaborationAPI } from '../lib/api';
-import { 
-  Loader2, ArrowLeft, Edit2, Trash2, CheckCircle, 
+import {
+  Loader2, ArrowLeft, Edit2, Trash2,
   Send, Users, MessageSquare, Target, Plus, Check,
-  Zap, Trophy, Code, Clock
+  Zap, Trophy, Clock
 } from 'lucide-react';
 import Layout from '../components/Layout';
 import StageBadge from '../components/StageBadge';
+import { Button } from '@/components/ui/button';
+
+const inputBase =
+  'rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-all';
 
 export default function ProjectDetailPage() {
   const { id } = useParams();
@@ -170,7 +174,7 @@ export default function ProjectDetailPage() {
     return (
       <Layout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="w-8 h-8 text-amber-500 animate-spin" />
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
         </div>
       </Layout>
     );
@@ -180,7 +184,7 @@ export default function ProjectDetailPage() {
     return (
       <Layout>
         <div className="max-w-7xl mx-auto px-4 py-12 text-center">
-          <p className="text-zinc-400">Project not found</p>
+          <p className="text-muted-foreground">Project not found</p>
         </div>
       </Layout>
     );
@@ -194,7 +198,7 @@ export default function ProjectDetailPage() {
         {/* Back Button */}
         <button
           onClick={() => navigate(-1)}
-          className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors mb-6"
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6"
           data-testid="back-btn"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -202,20 +206,20 @@ export default function ProjectDetailPage() {
         </button>
 
         {/* Project Header */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-sm p-6 mb-8">
+        <div className="bg-card border border-border rounded-xl shadow-card p-6 mb-8">
           <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-2">
                 <StageBadge stage={project.stage} />
-                <span className="font-mono text-xs text-zinc-500">
+                <span className="font-mono text-xs text-muted-foreground">
                   {formatDate(project.created_at)}
                 </span>
               </div>
-              <h1 className="text-3xl font-bold text-white tracking-tight mb-3">
+              <h1 className="text-3xl font-bold text-foreground tracking-tight mb-3">
                 {project.title}
               </h1>
               {project.description && (
-                <p className="text-zinc-400 mb-4 max-w-2xl">{project.description}</p>
+                <p className="text-muted-foreground mb-4 max-w-2xl">{project.description}</p>
               )}
               
               {/* Tech Stack */}
@@ -224,7 +228,7 @@ export default function ProjectDetailPage() {
                   {project.tech_stack.map((tech, i) => (
                     <span 
                       key={i} 
-                      className="font-mono text-xs bg-zinc-800 text-zinc-300 px-2 py-1 rounded-sm"
+                      className="font-mono text-xs bg-muted text-foreground px-2 py-1 rounded-md border border-border"
                     >
                       {tech}
                     </span>
@@ -234,8 +238,8 @@ export default function ProjectDetailPage() {
 
               {/* Support Needed */}
               {project.support_needed && (
-                <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-sm">
-                  <p className="text-sm text-amber-400">
+                <div className="bg-accent border border-border p-3 rounded-md">
+                  <p className="text-sm text-foreground">
                     <strong>Looking for:</strong> {project.support_needed}
                   </p>
                 </div>
@@ -245,9 +249,9 @@ export default function ProjectDetailPage() {
               {project.user && (
                 <Link 
                   to={`/user/${project.user.id}`}
-                  className="mt-4 inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors"
+                  className="mt-4 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  <div className="w-6 h-6 bg-zinc-700 rounded-full flex items-center justify-center text-xs font-medium">
+                  <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
                     {project.user.name?.[0]?.toUpperCase() || project.user.email?.[0]?.toUpperCase()}
                   </div>
                   {project.user.name || project.user.email?.split('@')[0]}
@@ -260,8 +264,9 @@ export default function ProjectDetailPage() {
               <div className="flex flex-wrap gap-2">
                 {project.stage !== 'completed' && (
                   <button
+                    type="button"
                     onClick={handleCompleteProject}
-                    className="bg-green-500/10 text-green-400 border border-green-500/20 px-4 py-2 rounded-sm hover:bg-green-500/20 transition-colors flex items-center gap-2"
+                    className="bg-accent text-primary border border-primary/30 px-4 py-2 rounded-md hover:bg-accent/80 transition-colors flex items-center gap-2 font-medium"
                     data-testid="complete-project-btn"
                   >
                     <Trophy className="w-4 h-4" />
@@ -270,7 +275,7 @@ export default function ProjectDetailPage() {
                 )}
                 <Link
                   to={`/projects/${id}/edit`}
-                  className="bg-zinc-800 text-white px-4 py-2 rounded-sm hover:bg-zinc-700 transition-colors flex items-center gap-2"
+                  className="bg-secondary text-secondary-foreground px-4 py-2 rounded-md hover:bg-muted border border-border transition-colors flex items-center gap-2"
                   data-testid="edit-project-btn"
                 >
                   <Edit2 className="w-4 h-4" />
@@ -295,8 +300,8 @@ export default function ProjectDetailPage() {
           <div className="lg:col-span-2 space-y-8">
             {/* Updates Section */}
             <div>
-              <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-                <Zap className="w-5 h-5 text-amber-500" />
+              <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
+                <Zap className="w-5 h-5 text-primary" />
                 Updates
               </h2>
 
@@ -306,36 +311,31 @@ export default function ProjectDetailPage() {
                     value={newUpdate}
                     onChange={(e) => setNewUpdate(e.target.value)}
                     placeholder="Share an update on your progress..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-sm px-4 py-3 text-white placeholder:text-zinc-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all resize-none"
+                    className={`w-full ${inputBase} px-4 py-3 resize-none`}
                     rows={3}
                     data-testid="update-input"
                   />
                   <div className="mt-2 flex justify-end">
-                    <button
-                      type="submit"
-                      disabled={!newUpdate.trim() || submitting}
-                      className="bg-amber-500 text-zinc-950 font-semibold px-4 py-2 rounded-sm hover:bg-amber-400 transition-colors disabled:opacity-50 flex items-center gap-2"
-                      data-testid="post-update-btn"
-                    >
+                    <Button type="submit" disabled={!newUpdate.trim() || submitting} data-testid="post-update-btn">
                       <Send className="w-4 h-4" />
                       Post Update
-                    </button>
+                    </Button>
                   </div>
                 </form>
               )}
 
               {updates.length === 0 ? (
-                <p className="text-zinc-500 text-center py-8">No updates yet</p>
+                <p className="text-muted-foreground text-center py-8">No updates yet</p>
               ) : (
                 <div className="space-y-4">
                   {updates.map(update => (
                     <div 
                       key={update.id} 
-                      className="bg-zinc-900 border border-zinc-800 p-4 rounded-sm"
+                      className="bg-card border border-border p-4 rounded-xl shadow-card"
                       data-testid="update-item"
                     >
-                      <p className="text-white whitespace-pre-wrap">{update.content}</p>
-                      <p className="font-mono text-xs text-zinc-500 mt-2">
+                      <p className="text-foreground whitespace-pre-wrap">{update.content}</p>
+                      <p className="font-mono text-xs text-muted-foreground mt-2">
                         {formatDate(update.created_at)}
                       </p>
                     </div>
@@ -346,8 +346,8 @@ export default function ProjectDetailPage() {
 
             {/* Comments Section */}
             <div>
-              <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-                <MessageSquare className="w-5 h-5 text-amber-500" />
+              <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-primary" />
                 Comments ({comments.length})
               </h2>
 
@@ -357,45 +357,40 @@ export default function ProjectDetailPage() {
                     value={newComment}
                     onChange={(e) => setNewComment(e.target.value)}
                     placeholder="Leave a comment..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-sm px-4 py-3 text-white placeholder:text-zinc-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all resize-none"
+                    className={`w-full ${inputBase} px-4 py-3 resize-none`}
                     rows={2}
                     data-testid="comment-input"
                   />
                   <div className="mt-2 flex justify-end">
-                    <button
-                      type="submit"
-                      disabled={!newComment.trim() || submitting}
-                      className="bg-zinc-800 text-white px-4 py-2 rounded-sm hover:bg-zinc-700 transition-colors disabled:opacity-50"
-                      data-testid="post-comment-btn"
-                    >
+                    <Button type="submit" variant="secondary" disabled={!newComment.trim() || submitting} data-testid="post-comment-btn">
                       Comment
-                    </button>
+                    </Button>
                   </div>
                 </form>
               )}
 
               {comments.length === 0 ? (
-                <p className="text-zinc-500 text-center py-8">No comments yet</p>
+                <p className="text-muted-foreground text-center py-8">No comments yet</p>
               ) : (
                 <div className="space-y-4">
                   {comments.map(comment => (
                     <div 
                       key={comment.id} 
-                      className="border-b border-zinc-800 pb-4 last:border-0"
+                      className="border-b border-border pb-4 last:border-0"
                       data-testid="comment-item"
                     >
                       <div className="flex items-center gap-2 mb-2">
-                        <div className="w-6 h-6 bg-zinc-700 rounded-full flex items-center justify-center text-xs font-medium">
+                        <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
                           {comment.user?.name?.[0]?.toUpperCase() || 'U'}
                         </div>
-                        <span className="text-sm font-medium text-white">
+                        <span className="text-sm font-medium text-foreground">
                           {comment.user?.name || 'Anonymous'}
                         </span>
-                        <span className="font-mono text-xs text-zinc-500">
+                        <span className="font-mono text-xs text-muted-foreground">
                           {formatDate(comment.created_at)}
                         </span>
                       </div>
-                      <p className="text-zinc-300 pl-8">{comment.content}</p>
+                      <p className="text-muted-foreground pl-8">{comment.content}</p>
                     </div>
                   ))}
                 </div>
@@ -406,9 +401,9 @@ export default function ProjectDetailPage() {
           {/* Sidebar */}
           <div className="space-y-6">
             {/* Milestones */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-sm p-6">
-              <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
-                <Target className="w-5 h-5 text-amber-500" />
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
+                <Target className="w-5 h-5 text-primary" />
                 Milestones
               </h3>
 
@@ -420,23 +415,18 @@ export default function ProjectDetailPage() {
                       value={newMilestone}
                       onChange={(e) => setNewMilestone(e.target.value)}
                       placeholder="Add milestone..."
-                      className="flex-1 bg-zinc-950 border border-zinc-800 rounded-sm px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all"
+                      className={`flex-1 ${inputBase} px-3 py-2 text-sm`}
                       data-testid="milestone-input"
                     />
-                    <button
-                      type="submit"
-                      disabled={!newMilestone.trim() || submitting}
-                      className="bg-amber-500 text-zinc-950 p-2 rounded-sm hover:bg-amber-400 transition-colors disabled:opacity-50"
-                      data-testid="add-milestone-btn"
-                    >
+                    <Button type="submit" size="icon" disabled={!newMilestone.trim() || submitting} data-testid="add-milestone-btn">
                       <Plus className="w-4 h-4" />
-                    </button>
+                    </Button>
                   </div>
                 </form>
               )}
 
               {milestones.length === 0 ? (
-                <p className="text-zinc-500 text-sm">No milestones set</p>
+                <p className="text-muted-foreground text-sm">No milestones set</p>
               ) : (
                 <div className="space-y-2">
                   {milestones.map(milestone => (
@@ -450,24 +440,24 @@ export default function ProjectDetailPage() {
                           onClick={() => handleToggleMilestone(milestone)}
                           className={`w-5 h-5 rounded-sm border flex items-center justify-center transition-colors ${
                             milestone.is_completed 
-                              ? 'bg-green-500 border-green-500' 
-                              : 'border-zinc-600 hover:border-amber-500'
+                              ? 'bg-primary border-primary' 
+                              : 'border-border hover:border-primary'
                           }`}
                           data-testid="toggle-milestone-btn"
                         >
-                          {milestone.is_completed && <Check className="w-3 h-3 text-white" />}
+                          {milestone.is_completed && <Check className="w-3 h-3 text-primary-foreground" />}
                         </button>
                       ) : (
                         <div className={`w-5 h-5 rounded-sm border flex items-center justify-center ${
                           milestone.is_completed 
-                            ? 'bg-green-500 border-green-500' 
-                            : 'border-zinc-600'
+                            ? 'bg-primary border-primary' 
+                            : 'border-border'
                         }`}>
-                          {milestone.is_completed && <Check className="w-3 h-3 text-white" />}
+                          {milestone.is_completed && <Check className="w-3 h-3 text-primary-foreground" />}
                         </div>
                       )}
                       <span className={`text-sm ${
-                        milestone.is_completed ? 'text-zinc-500 line-through' : 'text-white'
+                        milestone.is_completed ? 'text-muted-foreground line-through' : 'text-foreground'
                       }`}>
                         {milestone.title}
                       </span>
@@ -478,9 +468,9 @@ export default function ProjectDetailPage() {
             </div>
 
             {/* Collaboration */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-sm p-6">
-              <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
-                <Users className="w-5 h-5 text-amber-500" />
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
+                <Users className="w-5 h-5 text-primary" />
                 Collaboration
               </h3>
 
@@ -492,49 +482,42 @@ export default function ProjectDetailPage() {
                         value={collabMessage}
                         onChange={(e) => setCollabMessage(e.target.value)}
                         placeholder="Why do you want to collaborate?"
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-sm px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all resize-none mb-2"
+                        className={`w-full ${inputBase} px-3 py-2 text-sm resize-none mb-2`}
                         rows={2}
                         data-testid="collab-message-input"
                       />
                       <div className="flex gap-2">
-                        <button
-                          type="submit"
-                          disabled={submitting}
-                          className="flex-1 bg-amber-500 text-zinc-950 font-semibold py-2 rounded-sm hover:bg-amber-400 transition-colors disabled:opacity-50"
-                          data-testid="send-collab-btn"
-                        >
+                        <Button type="submit" className="flex-1" disabled={submitting} data-testid="send-collab-btn">
                           Send Request
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowCollabForm(false)}
-                          className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
-                        >
+                        </Button>
+                        <Button type="button" variant="ghost" onClick={() => setShowCollabForm(false)}>
                           Cancel
-                        </button>
+                        </Button>
                       </div>
                     </form>
                   ) : (
-                    <button
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full mb-4"
                       onClick={() => setShowCollabForm(true)}
-                      className="w-full bg-amber-500/10 text-amber-500 border border-amber-500/20 py-2 rounded-sm hover:bg-amber-500/20 transition-colors mb-4"
                       data-testid="request-collab-btn"
                     >
                       Request to Collaborate
-                    </button>
+                    </Button>
                   )}
                 </>
               )}
 
               {alreadyRequested && !isOwner && (
-                <p className="text-amber-500 text-sm mb-4 flex items-center gap-2">
+                <p className="text-primary text-sm mb-4 flex items-center gap-2 font-medium">
                   <Clock className="w-4 h-4" />
                   Collaboration requested
                 </p>
               )}
 
               {collaborators.length === 0 ? (
-                <p className="text-zinc-500 text-sm">No collaboration requests</p>
+                <p className="text-muted-foreground text-sm">No collaboration requests</p>
               ) : (
                 <div className="space-y-3">
                   {collaborators.map(collab => (
@@ -544,19 +527,19 @@ export default function ProjectDetailPage() {
                       data-testid="collaborator-item"
                     >
                       <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 bg-zinc-700 rounded-full flex items-center justify-center text-xs font-medium">
+                        <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
                           {collab.requester?.name?.[0]?.toUpperCase() || 'U'}
                         </div>
-                        <span className="text-sm text-white">
+                        <span className="text-sm text-foreground">
                           {collab.requester?.name || 'Unknown'}
                         </span>
                       </div>
-                      <span className={`text-xs font-mono px-2 py-0.5 rounded-sm ${
+                      <span className={`text-xs font-mono px-2 py-0.5 rounded-md border ${
                         collab.status === 'accepted' 
-                          ? 'bg-green-500/10 text-green-400' 
+                          ? 'bg-accent text-primary border-primary/25' 
                           : collab.status === 'rejected'
-                          ? 'bg-red-500/10 text-red-400'
-                          : 'bg-amber-500/10 text-amber-400'
+                          ? 'bg-destructive/10 text-destructive border-destructive/20'
+                          : 'bg-muted text-muted-foreground border-border'
                       }`}>
                         {collab.status}
                       </span>
