@@ -32,10 +32,20 @@ export const projectsAPI = {
   list: (params = {}) => api.get('/projects', { params }),
   get: (id) => api.get(`/projects/${id}`),
   create: (data) => api.post('/projects', data),
+  createManual: (data) => api.post('/projects/manual', data),
+  importFromGithub: (data) => api.post('/projects/import/github', data),
   update: (id, data) => api.put(`/projects/${id}`, data),
   complete: (id) => api.patch(`/projects/${id}/complete`),
   delete: (id) => api.delete(`/projects/${id}`),
+  refresh: (id) => api.post(`/projects/${id}/refresh`),
   getMyProjects: (params = {}) => api.get('/my/projects', { params })
+};
+
+export const githubAPI = {
+  connectStart: () => api.post('/integrations/github/connect/start'),
+  getAccount: () => api.get('/integrations/github/account'),
+  disconnect: () => api.delete('/integrations/github/account'),
+  listRepos: (params = {}) => api.get('/integrations/github/repos', { params })
 };
 
 // Project Updates API
@@ -48,7 +58,11 @@ export const updatesAPI = {
 export const milestonesAPI = {
   list: (projectId) => api.get(`/projects/${projectId}/milestones`),
   create: (projectId, data) => api.post(`/projects/${projectId}/milestones`, data),
-  update: (milestoneId, data) => api.patch(`/milestones/${milestoneId}`, data)
+  update: (projectId, milestoneId, data) => api.patch(`/projects/${projectId}/milestones/${milestoneId}`, data)
+};
+
+export const activityAPI = {
+  list: (projectId) => api.get(`/projects/${projectId}/activity`)
 };
 
 // Comments API

@@ -88,13 +88,21 @@ export function AuthProvider({ children }) {
 
   // Email/Password Sign Up via Supabase
   const register = async (email, password, name) => {
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    const normalizedName = (name || '').trim();
+    if (!normalizedEmail) {
+      throw new Error('Email is required.');
+    }
+    if (!normalizedName) {
+      throw new Error('Name is required.');
+    }
     const origin = getAuthRedirectOrigin();
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: normalizedEmail,
       password,
       options: {
         data: {
-          full_name: name,
+          full_name: normalizedName,
         },
         emailRedirectTo: origin ? `${origin}/auth/confirmed` : undefined,
       },

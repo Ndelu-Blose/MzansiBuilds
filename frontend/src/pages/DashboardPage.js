@@ -133,7 +133,7 @@ export default function DashboardPage() {
               <h2 className="text-xl font-semibold text-foreground">Your Projects</h2>
               <Button onClick={() => setShowCreateModal(true)} data-testid="create-project-btn">
                 <Plus className="w-4 h-4" />
-                New Project
+                Import from GitHub
               </Button>
             </div>
 
@@ -141,10 +141,10 @@ export default function DashboardPage() {
               <div className="bg-card border border-border rounded-xl shadow-card p-12 text-center">
                 <FolderKanban className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-foreground mb-2">No projects yet</h3>
-                <p className="text-muted-foreground mb-6">Start building in public by creating your first project</p>
+                <p className="text-muted-foreground mb-6">Start building in public by importing code or creating an idea project</p>
                 <Button onClick={() => setShowCreateModal(true)} data-testid="empty-create-project-btn">
                   <Plus className="w-4 h-4" />
-                  Create Project
+                  Import from GitHub
                 </Button>
               </div>
             ) : (
