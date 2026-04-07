@@ -5,7 +5,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, and_
@@ -15,17 +15,19 @@ import base64
 import logging
 import bcrypt
 import jwt
-import secrets
 import json
+import re
 import httpx
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 from database import get_db, engine, Base, AsyncSessionLocal
 from models import (
-    User, Profile, Project, ProjectUpdate, Milestone, 
+    User, Profile, Project, ProjectUpdate, Milestone,
     Comment, CollaborationRequest, UserSession, LoginAttempt,
-    ProjectStage, CollaborationStatus
+    ProjectStage, CollaborationStatus, ConnectedAccount, ConnectedProvider,
+    ProjectRepository, ProjectLanguage, ProjectCommit, ProjectContributor, ProjectFileHighlight,
+    RepoProvider, OwnershipType, VerificationStatus, ProjectType, ProjectUpdateType, MilestoneStatus
 )
 from schemas import (
     UserCreate, UserLogin, UserResponse, UserWithProfile,
@@ -39,8 +41,19 @@ from schemas import (
     CollaborationRequestResponse, CollaborationRequestWithRequester,
     FeedItem, FeedResponse, AuthResponse, TokenResponse,
     ForgotPasswordRequest, ResetPasswordRequest,
-    ProjectStageEnum, CollaborationStatusEnum
+    ProjectStageEnum, CollaborationStatusEnum, GitHubConnectStartResponse,
+    GitHubAccountResponse, GitHubRepoListResponse, ImportGitHubProjectRequest,
+    CreateManualProjectRequest
 )
+from github_oauth_service import (
+    build_authorization_url, exchange_code_for_token, fetch_authenticated_profile,
+    encrypt_token, decrypt_token,
+)
+from github_api_service import list_user_repos, get_repo, get_repo_contributors
+from project_import_service import create_imported_project
+from project_sync_service import run_repo_sync
+from project_activity_service import merge_project_activity
+from oauth_state_service import create_oauth_state, validate_oauth_state, mark_oauth_state_used, cleanup_expired_states
 from email_service import (
     send_welcome_email, 
     send_collaboration_request_email,
@@ -71,6 +84,7 @@ def _oauth_session_data_url() -> str:
 # App setup
 app = FastAPI(title="MzansiBuilds API", version="1.0.0")
 api_router = APIRouter(prefix="/api")
+repo_refresh_tracker: dict[str, datetime] = {}
 
 
 # ========== Password Utilities ==========
@@ -105,23 +119,48 @@ def create_refresh_token(user_id: str) -> str:
 
 
 # ========== Auth Dependencies ==========
-async def verify_supabase_token(token: str) -> dict:
-    """Verify Supabase JWT token"""
+async def verify_supabase_token(token: str) -> Optional[dict]:
+    """Verify Supabase access JWT using SUPABASE_JWT_SECRET (required; no unverified fallback)."""
+    if not SUPABASE_JWT_SECRET:
+        return None
     try:
-        # Supabase JWTs can be verified by checking the iss claim matches the Supabase URL
-        # For production, you should verify with the JWT secret
-        unverified = jwt.decode(token, options={"verify_signature": False})
-        
-        # Check if it's a Supabase token
-        if unverified.get("iss") and "supabase" in unverified.get("iss", ""):
-            return {
-                "sub": unverified.get("sub"),
-                "email": unverified.get("email"),
-                "provider": "supabase"
-            }
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            audience="authenticated",
+        )
+    except jwt.InvalidTokenError:
         return None
-    except Exception:
+    iss = str(payload.get("iss") or "")
+    if "supabase" not in iss.lower():
         return None
+    if SUPABASE_URL:
+        expected_iss = f"{SUPABASE_URL.rstrip('/')}/auth/v1"
+        if payload.get("iss") != expected_iss:
+            return None
+    return payload
+
+
+async def require_supabase_access_jwt(request: Request) -> dict:
+    """Dependency: valid Supabase Bearer JWT; used for /auth/sync so claims cannot be spoofed via JSON."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization Bearer token required")
+    if not SUPABASE_JWT_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="SUPABASE_JWT_SECRET is not configured",
+        )
+    payload = await verify_supabase_token(auth_header[7:])
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired Supabase session")
+    email = (payload.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Token must include an email claim")
+    if not payload.get("sub"):
+        raise HTTPException(status_code=400, detail="Token must include a subject claim")
+    return payload
 
 
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> User:
@@ -208,6 +247,7 @@ def user_to_response(user: User) -> dict:
         "id": user.id,
         "email": user.email,
         "name": user.name,
+        "username": user.username,
         "role": user.role,
         "auth_provider": user.auth_provider,
         "picture": user.picture,
@@ -215,22 +255,55 @@ def user_to_response(user: User) -> dict:
     }
 
 
-def profile_to_response(profile: Profile) -> dict:
+def profile_to_response(profile: Profile, user: Optional[User] = None) -> dict:
     skills = None
     if profile.skills:
         try:
             skills = json.loads(profile.skills)
         except:
             skills = []
+    source_user = user or profile.user
     return {
         "id": profile.id,
         "user_id": profile.user_id,
+        "display_name": source_user.name if source_user else None,
+        "username": source_user.username if source_user else None,
         "bio": profile.bio,
+        "headline": profile.headline,
+        "location": profile.location,
         "skills": skills,
         "github_url": profile.github_url,
+        "linkedin_url": profile.linkedin_url,
+        "portfolio_url": profile.portfolio_url,
+        "avatar_url": profile.avatar_url,
         "created_at": profile.created_at.isoformat() if profile.created_at else None,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None
     }
+
+
+def normalize_username(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if not re.fullmatch(r"[a-z0-9_]{3,50}", normalized):
+        raise HTTPException(
+            status_code=422,
+            detail="Username must be 3-50 chars and contain only lowercase letters, numbers, or underscores.",
+        )
+    return normalized
+
+
+def normalize_profile_url(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if not (normalized.startswith("http://") or normalized.startswith("https://")):
+        raise HTTPException(status_code=422, detail="Profile links must start with http:// or https://")
+    return normalized
 
 
 def project_to_response(project: Project, include_user: bool = False) -> dict:
@@ -249,6 +322,19 @@ def project_to_response(project: Project, include_user: bool = False) -> dict:
         "tech_stack": tech_stack,
         "stage": project.stage.value if project.stage else "idea",
         "support_needed": project.support_needed,
+        "short_pitch": project.short_pitch,
+        "long_description": project.long_description,
+        "category": project.category,
+        "tags": json.loads(project.tags_json) if project.tags_json else [],
+        "looking_for_help": project.looking_for_help,
+        "roles_needed": json.loads(project.roles_needed_json) if project.roles_needed_json else [],
+        "demo_url": project.demo_url,
+        "problem_statement": project.problem_statement,
+        "roadmap_summary": project.roadmap_summary,
+        "project_type": project.project_type.value if project.project_type else "idea",
+        "verification_status": project.verification_status.value if project.verification_status else "unverified",
+        "ownership_type": project.ownership_type.value if project.ownership_type else "none",
+        "repo_connected": bool(project.repo_connected),
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None
     }
@@ -259,9 +345,48 @@ def project_to_response(project: Project, include_user: bool = False) -> dict:
     return response
 
 
+def project_update_to_response(update: ProjectUpdate) -> dict:
+    return {
+        "id": update.id,
+        "project_id": update.project_id,
+        "author_user_id": update.author_user_id,
+        "title": update.title,
+        "body": update.body,
+        "update_type": update.update_type.value if update.update_type else "progress",
+        "created_at": update.created_at.isoformat() if update.created_at else None,
+        "updated_at": update.updated_at.isoformat() if update.updated_at else None,
+    }
+
+
+def milestone_to_response(milestone: Milestone) -> dict:
+    return {
+        "id": milestone.id,
+        "project_id": milestone.project_id,
+        "title": milestone.title,
+        "description": milestone.description,
+        "status": milestone.status.value if milestone.status else "planned",
+        "due_date": milestone.due_date.isoformat() if milestone.due_date else None,
+        "completed_at": milestone.completed_at.isoformat() if milestone.completed_at else None,
+        "created_by_user_id": milestone.created_by_user_id,
+        "created_at": milestone.created_at.isoformat() if milestone.created_at else None,
+        "updated_at": milestone.updated_at.isoformat() if milestone.updated_at else None,
+    }
+
+
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
     response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+
+
+async def get_active_github_account(db: AsyncSession, user_id: str) -> Optional[ConnectedAccount]:
+    result = await db.execute(
+        select(ConnectedAccount).where(
+            ConnectedAccount.user_id == user_id,
+            ConnectedAccount.provider == ConnectedProvider.github,
+            ConnectedAccount.is_active.is_(True),
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 # ========== AUTH ENDPOINTS ==========
@@ -367,6 +492,10 @@ async def get_me(user: User = Depends(get_current_user), db: AsyncSession = Depe
     profile = result.scalar_one_or_none()
     
     response = user_to_response(user)
+    if not response.get("picture"):
+        github_account = await get_active_github_account(db, user.id)
+        if github_account and github_account.avatar_url:
+            response["picture"] = github_account.avatar_url
     if profile:
         response["profile"] = profile_to_response(profile)
     return response
@@ -491,30 +620,58 @@ async def google_session(request: Request, response: Response, db: AsyncSession 
 
 # ========== SUPABASE AUTH SYNC ENDPOINT ==========
 @api_router.post("/auth/sync")
-async def sync_supabase_user(request: Request, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
-    """Sync user from Supabase Auth to our database"""
-    body = await request.json()
-    
-    supabase_id = body.get("supabase_id")
-    email = body.get("email", "").lower().strip()
-    name = body.get("name")
-    picture = body.get("picture")
-    provider = body.get("provider", "email")
-    email_confirmed_at = body.get("email_confirmed_at")
+async def sync_supabase_user(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    claims: dict = Depends(require_supabase_access_jwt),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync user from Supabase Auth to our database. Identity and auth state come from the verified JWT only."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
 
-    if not email:
-        raise HTTPException(status_code=400, detail="Email is required")
+    supabase_id = claims.get("sub")
+    email = (claims.get("email") or "").lower().strip()
+    user_meta = claims.get("user_metadata") or {}
+    if not isinstance(user_meta, dict):
+        user_meta = {}
+    app_meta = claims.get("app_metadata") or {}
+    if not isinstance(app_meta, dict):
+        app_meta = {}
+
+    # Optional profile hints from client (cannot override JWT identity / provider / verification)
+    name = body.get("name") or user_meta.get("full_name") or user_meta.get("name")
+    picture = body.get("picture") or user_meta.get("avatar_url") or user_meta.get("picture")
+    provider = app_meta.get("provider") or "email"
+    email_confirmed_at = claims.get("email_confirmed_at")
+
+    if body.get("supabase_id") is not None and body.get("supabase_id") != supabase_id:
+        raise HTTPException(status_code=400, detail="supabase_id does not match session")
+    if body.get("email") is not None and (body.get("email") or "").lower().strip() != email:
+        raise HTTPException(status_code=400, detail="email does not match session")
     
-    # Find existing user by supabase_id (stored in google_id field) or email
-    result = await db.execute(
-        select(User).where(
-            or_(
-                User.google_id == supabase_id,
-                User.email == email
-            )
+    # Resolve identity deterministically to avoid split-account behavior.
+    by_supabase_result = await db.execute(select(User).where(User.google_id == supabase_id))
+    user_by_supabase = by_supabase_result.scalar_one_or_none()
+    by_email_result = await db.execute(select(User).where(User.email == email))
+    user_by_email = by_email_result.scalar_one_or_none()
+
+    # Hard conflict: this Supabase identity points at a different local user than the claimed email.
+    if user_by_supabase and user_by_email and user_by_supabase.id != user_by_email.id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "identity_conflict",
+                "message": "This email is already linked to another account.",
+                "hint": "Sign in with the original provider for this email account.",
+            },
         )
-    )
-    user = result.scalar_one_or_none()
+
+    user = user_by_supabase or user_by_email
     
     is_new_user = False
     if not user:
@@ -542,6 +699,17 @@ async def sync_supabase_user(request: Request, background_tasks: BackgroundTasks
         # Update existing user
         if supabase_id and not user.google_id:
             user.google_id = supabase_id
+        elif supabase_id and user.google_id and user.google_id != supabase_id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "identity_conflict",
+                    "message": "This account is linked to a different sign-in identity.",
+                    "hint": "Use the same provider you used previously for this email.",
+                },
+            )
+        if email and user.email != email:
+            user.email = email
         if picture:
             user.picture = picture
         if name and not user.name:
@@ -561,6 +729,158 @@ async def sync_supabase_user(request: Request, background_tasks: BackgroundTasks
     return {"user": user_to_response(user), "message": "User synced successfully", "is_new": is_new_user}
 
 
+# ========== GITHUB INTEGRATION ENDPOINTS ==========
+@api_router.post("/integrations/github/connect/start", response_model=GitHubConnectStartResponse)
+async def github_connect_start(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    data = build_authorization_url()
+    await create_oauth_state(db, data["state"], user.id, ConnectedProvider.github)
+    return data
+
+
+@api_router.get("/integrations/github/callback")
+async def github_callback(code: str, state: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    await cleanup_expired_states(db)
+    if not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth state")
+    try:
+        oauth_state = await validate_oauth_state(db, state, ConnectedProvider.github)
+    except ValueError as exc:
+        reason = str(exc)
+        if reason == "expired":
+            raise HTTPException(status_code=400, detail="OAuth state expired")
+        if reason == "reused":
+            raise HTTPException(status_code=400, detail="OAuth state already used")
+        raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
+    token = await exchange_code_for_token(code)
+    profile = await fetch_authenticated_profile(token)
+    provider_account_id = profile.get("id")
+    if not provider_account_id:
+        raise HTTPException(status_code=400, detail="GitHub profile missing id")
+
+    user_result = await db.execute(select(User).where(User.id == oauth_state.user_id))
+    current_user = user_result.scalar_one_or_none()
+    if not current_user:
+        frontend_url = (os.environ.get("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
+        return RedirectResponse(url=f"{frontend_url}/dashboard?github_connect=failed", status_code=302)
+
+    existing = await get_active_github_account(db, current_user.id)
+    if existing:
+        existing.provider_account_id = provider_account_id
+        existing.provider_username = profile.get("login") or ""
+        existing.provider_display_name = profile.get("name")
+        existing.avatar_url = profile.get("avatar_url")
+        existing.access_token_encrypted = encrypt_token(token)
+        existing.last_used_at = datetime.now(timezone.utc)
+    else:
+        db.add(
+            ConnectedAccount(
+                user_id=current_user.id,
+                provider=ConnectedProvider.github,
+                provider_account_id=provider_account_id,
+                provider_username=profile.get("login") or "",
+                provider_display_name=profile.get("name"),
+                avatar_url=profile.get("avatar_url"),
+                access_token_encrypted=encrypt_token(token),
+                is_active=True,
+            )
+        )
+    profile_result = await db.execute(select(Profile).where(Profile.user_id == current_user.id))
+    user_profile = profile_result.scalar_one_or_none()
+    if profile.get("avatar_url") and (not user_profile or not user_profile.avatar_url):
+        current_user.picture = profile.get("avatar_url")
+    if (not current_user.name) and (profile.get("name") or profile.get("login")):
+        current_user.name = profile.get("name") or profile.get("login")
+
+    # Auto-populate profile links after successful GitHub connect.
+    github_login = profile.get("login")
+    if user_profile and github_login:
+        if not user_profile.github_url:
+            user_profile.github_url = f"https://github.com/{github_login}"
+        user_profile.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await mark_oauth_state_used(db, oauth_state.id)
+    frontend_url = (os.environ.get("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
+    return RedirectResponse(url=f"{frontend_url}/dashboard?github_connect=success", status_code=302)
+
+
+@api_router.get("/integrations/github/account", response_model=GitHubAccountResponse)
+async def github_account(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    account = await get_active_github_account(db, user.id)
+    if not account:
+        return {"connected": False}
+    return {
+        "connected": True,
+        "username": account.provider_username,
+        "avatar_url": account.avatar_url,
+        "scopes": account.token_scopes,
+        "connected_at": account.connected_at,
+    }
+
+
+@api_router.delete("/integrations/github/account")
+async def github_disconnect(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    account = await get_active_github_account(db, user.id)
+    if not account:
+        return {"message": "No connected GitHub account"}
+    account.is_active = False
+    await db.execute(
+        select(Project).where(
+            Project.user_id == user.id,
+            Project.project_type == ProjectType.repo_backed,
+        )
+    )
+    result = await db.execute(select(Project).where(Project.user_id == user.id, Project.repo_connected.is_(True)))
+    projects = result.scalars().all()
+    for project in projects:
+        project.verification_status = VerificationStatus.disconnected
+        project.repo_connected = False
+    await db.commit()
+    return {"message": "GitHub account disconnected"}
+
+
+@api_router.get("/integrations/github/repos", response_model=GitHubRepoListResponse)
+async def github_repos(page: int = 1, per_page: int = 30, search: Optional[str] = None, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    account = await get_active_github_account(db, user.id)
+    if not account:
+        raise HTTPException(status_code=400, detail="Connect GitHub first")
+    token = decrypt_token(account.access_token_encrypted)
+    repos = await list_user_repos(token, page=1, per_page=100)
+    if search:
+        search_lower = search.lower().strip()
+        repos = [
+            r
+            for r in repos
+            if search_lower in (r.get("full_name") or "").lower()
+            or search_lower in (r.get("description") or "").lower()
+            or search_lower in (r.get("language") or "").lower()
+        ]
+    total = len(repos)
+    start = max((page - 1) * per_page, 0)
+    end = start + per_page
+    paged_repos = repos[start:end]
+    items = [
+        {
+            "github_repo_id": r["id"],
+            "name": r["name"],
+            "full_name": r["full_name"],
+            "owner_login": (r.get("owner") or {}).get("login"),
+            "owner_id": (r.get("owner") or {}).get("id"),
+            "private": r.get("private") or False,
+            "description": r.get("description"),
+            "updated_at": r.get("updated_at"),
+            "pushed_at": r.get("pushed_at"),
+            "language": r.get("language"),
+            "owner_match": (r.get("owner") or {}).get("id") == account.provider_account_id,
+            "contributor_match": not ((r.get("owner") or {}).get("id") == account.provider_account_id),
+            "visibility": "private" if r.get("private") else "public",
+        }
+        for r in paged_repos
+    ]
+    return {"items": items, "total": total, "page": page, "per_page": per_page}
+
+
 # ========== PROFILE ENDPOINTS ==========
 @api_router.get("/profile")
 async def get_profile(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -570,7 +890,7 @@ async def get_profile(user: User = Depends(get_current_user), db: AsyncSession =
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     
-    return profile_to_response(profile)
+    return profile_to_response(profile, user=user)
 
 
 @api_router.put("/profile")
@@ -582,19 +902,46 @@ async def update_profile(data: ProfileUpdate, user: User = Depends(get_current_u
         # Create profile if doesn't exist
         profile = Profile(user_id=user.id)
         db.add(profile)
-    
+
+    if data.display_name is not None:
+        user.name = data.display_name.strip() or None
+    if data.username is not None:
+        normalized_username = normalize_username(data.username)
+        if normalized_username:
+            username_result = await db.execute(
+                select(User).where(
+                    User.username == normalized_username,
+                    User.id != user.id,
+                )
+            )
+            if username_result.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail="That username is already taken.")
+        user.username = normalized_username
+
     if data.bio is not None:
         profile.bio = data.bio
+    if data.headline is not None:
+        profile.headline = data.headline
+    if data.location is not None:
+        profile.location = data.location
     if data.skills is not None:
         profile.skills = json.dumps(data.skills)
     if data.github_url is not None:
-        profile.github_url = data.github_url
+        profile.github_url = normalize_profile_url(data.github_url)
+    if data.linkedin_url is not None:
+        profile.linkedin_url = normalize_profile_url(data.linkedin_url)
+    if data.portfolio_url is not None:
+        profile.portfolio_url = normalize_profile_url(data.portfolio_url)
+    if data.avatar_url is not None:
+        profile.avatar_url = data.avatar_url
+        user.picture = data.avatar_url or None
     
     profile.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(profile)
+    await db.refresh(user)
     
-    return profile_to_response(profile)
+    return profile_to_response(profile, user=user)
 
 
 @api_router.get("/users/{user_id}/profile")
@@ -619,7 +966,7 @@ async def get_user_profile(user_id: str, db: AsyncSession = Depends(get_db)):
     
     response = user_to_response(user)
     if user.profile:
-        response["profile"] = profile_to_response(user.profile)
+        response["profile"] = profile_to_response(user.profile, user=user)
     
     response["stats"] = {
         "total_projects": total_projects,
@@ -635,6 +982,88 @@ async def get_user_profile(user_id: str, db: AsyncSession = Depends(get_db)):
 
 
 # ========== PROJECT ENDPOINTS ==========
+@api_router.post("/projects/import/github")
+async def import_project_from_github(
+    data: ImportGitHubProjectRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account = await get_active_github_account(db, user.id)
+    if not account:
+        raise HTTPException(status_code=400, detail="Connect GitHub account first")
+
+    token = decrypt_token(account.access_token_encrypted)
+    repos = await list_user_repos(token, page=1, per_page=100)
+    selected = next((r for r in repos if r.get("id") == data.github_repo_id), None)
+    if not selected:
+        raise HTTPException(status_code=403, detail="Selected repository is not accessible for connected account")
+
+    repo_data = await get_repo(token, selected["owner"]["login"], selected["name"])
+    contributors = await get_repo_contributors(token, selected["owner"]["login"], selected["name"], limit=100)
+    contributor_ids = {c.get("id") for c in contributors if c.get("id")}
+
+    project_payload = {
+        "title": data.title,
+        "stage": ProjectStage(data.stage.value),
+        "short_pitch": data.short_pitch,
+        "long_description": data.long_description,
+        "category": data.category,
+        "tags_json": json.dumps(data.tags or []),
+        "looking_for_help": data.looking_for_help,
+        "roles_needed_json": json.dumps(data.roles_needed or []),
+        "demo_url": data.demo_url,
+        "problem_statement": data.problem_statement,
+        "roadmap_summary": data.roadmap_summary,
+    }
+    project, repository = create_imported_project(
+        user_id=user.id,
+        payload=project_payload,
+        repo_data=repo_data,
+        contributor_ids=contributor_ids,
+        connected_account_id=account.provider_account_id,
+    )
+    db.add(project)
+    await db.flush()
+    repository.project_id = project.id
+    db.add(repository)
+    await db.commit()
+    await db.refresh(project)
+    await db.refresh(repository)
+
+    await run_repo_sync(db, repository, token)
+    return project_to_response(project, include_user=False)
+
+
+@api_router.post("/projects/manual")
+async def create_manual_project(
+    data: CreateManualProjectRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = Project(
+        user_id=user.id,
+        title=data.title,
+        description=data.long_description,
+        short_pitch=data.short_pitch,
+        long_description=data.long_description,
+        category=data.category,
+        stage=ProjectStage(data.stage.value),
+        tags_json=json.dumps(data.tags or []),
+        looking_for_help=data.looking_for_help or False,
+        roles_needed_json=json.dumps(data.roles_needed or []),
+        problem_statement=data.problem_statement,
+        roadmap_summary=data.roadmap_summary,
+        project_type=ProjectType.idea,
+        verification_status=VerificationStatus.unverified,
+        ownership_type=OwnershipType.external if data.optional_repo_url else OwnershipType.none,
+        repo_connected=False,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    return project_to_response(project, include_user=False)
+
+
 @api_router.post("/projects")
 async def create_project(data: ProjectCreate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     tech_stack = json.dumps(data.tech_stack) if data.tech_stack else None
@@ -645,7 +1074,11 @@ async def create_project(data: ProjectCreate, user: User = Depends(get_current_u
         description=data.description,
         tech_stack=tech_stack,
         stage=ProjectStage(data.stage.value),
-        support_needed=data.support_needed
+        support_needed=data.support_needed,
+        project_type=ProjectType.idea,
+        verification_status=VerificationStatus.unverified,
+        ownership_type=OwnershipType.none,
+        repo_connected=False,
     )
     db.add(project)
     await db.commit()
@@ -749,7 +1182,10 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
             selectinload(Project.user),
             selectinload(Project.milestones),
             selectinload(Project.updates),
-            selectinload(Project.comments)
+            selectinload(Project.comments),
+            selectinload(Project.repository),
+            selectinload(Project.repo_contributors),
+            selectinload(Project.commits),
         )
         .where(Project.id == project_id)
     )
@@ -759,20 +1195,120 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
     
     response = project_to_response(project, include_user=True)
-    response["milestones"] = [
-        {
-            "id": m.id,
-            "project_id": m.project_id,
-            "title": m.title,
-            "is_completed": m.is_completed,
-            "created_at": m.created_at.isoformat() if m.created_at else None
-        }
-        for m in project.milestones
-    ]
+    response["milestones"] = [milestone_to_response(m) for m in project.milestones]
     response["updates_count"] = len(project.updates)
     response["comments_count"] = len(project.comments)
+    response["contributors"] = [
+        {
+            "github_user_id": c.github_user_id,
+            "github_username": c.github_username,
+            "display_name": c.display_name,
+            "avatar_url": c.avatar_url,
+            "role": c.role.value if c.role else "contributor",
+            "is_verified": c.is_verified,
+        }
+        for c in project.repo_contributors
+    ]
+    response["recent_commits"] = [
+        {
+            "sha": c.commit_sha,
+            "author_login": c.author_login,
+            "message_headline": c.message_headline,
+            "committed_at": c.committed_at.isoformat() if c.committed_at else None,
+            "commit_url": c.commit_url,
+        }
+        for c in sorted(project.commits, key=lambda item: item.committed_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)[:10]
+    ]
+    if project.repository:
+        repo = project.repository
+        langs_result = await db.execute(select(ProjectLanguage).where(ProjectLanguage.project_repository_id == repo.id))
+        languages = langs_result.scalars().all()
+        highlights_result = await db.execute(
+            select(ProjectFileHighlight).where(ProjectFileHighlight.project_repository_id == repo.id)
+        )
+        key_files = highlights_result.scalars().all()
+        detected_frameworks = json.loads(repo.detected_frameworks_json) if repo.detected_frameworks_json else []
+        response["repo_summary"] = {
+            "provider": repo.provider.value,
+            "repo_name": repo.repo_name,
+            "repo_full_name": repo.repo_full_name,
+            "repo_url": repo.repo_url,
+            "default_branch": repo.default_branch,
+            "visibility": repo.visibility,
+            "stars_count": repo.stars_count,
+            "forks_count": repo.forks_count,
+            "open_issues_count": repo.open_issues_count,
+            "repo_created_at": repo.repo_created_at.isoformat() if repo.repo_created_at else None,
+            "repo_updated_at": repo.repo_updated_at.isoformat() if repo.repo_updated_at else None,
+            "repo_pushed_at": repo.repo_pushed_at.isoformat() if repo.repo_pushed_at else None,
+            "last_synced_at": repo.last_synced_at.isoformat() if repo.last_synced_at else None,
+            "sync_status": repo.sync_status.value if repo.sync_status else None,
+            "sync_error": repo.sync_error,
+            "readme_excerpt": repo.readme_preview,
+            "key_files": json.loads(repo.important_files_json) if repo.important_files_json else [],
+            "detected_frameworks": detected_frameworks,
+        }
+        response["languages"] = [{"name": l.language_name, "bytes": l.bytes, "percentage": l.percentage} for l in languages]
+        response["readme_excerpt"] = repo.readme_preview
+        response["readme_present"] = bool(repo.readme_preview)
+        response["last_synced_at"] = repo.last_synced_at.isoformat() if repo.last_synced_at else None
+        response["sync_status"] = repo.sync_status.value if repo.sync_status else None
+        response["sync_error"] = repo.sync_error
+        response["detected_frameworks"] = detected_frameworks
+        response["key_file_highlights"] = [
+            {
+                "path": f.path,
+                "item_type": f.item_type,
+                "classification": f.classification,
+                "is_key_file": f.is_key_file,
+            }
+            for f in key_files
+        ]
+    else:
+        response["repo_summary"] = None
+        response["languages"] = []
+        response["readme_excerpt"] = None
+        response["readme_present"] = False
+        response["last_synced_at"] = None
+        response["sync_status"] = None
+        response["sync_error"] = None
+        response["detected_frameworks"] = []
+        response["key_file_highlights"] = []
     
     return response
+
+
+@api_router.post("/projects/{project_id}/refresh")
+async def refresh_project_repo(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    key = f"{user.id}:{project_id}"
+    now = datetime.now(timezone.utc)
+    last = repo_refresh_tracker.get(key)
+    if last and (now - last).total_seconds() < 60:
+        raise HTTPException(status_code=429, detail="Refresh rate limit exceeded. Try again in a minute.")
+    result = await db.execute(
+        select(Project).options(selectinload(Project.repository)).where(Project.id == project_id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to refresh this project")
+    if not project.repository:
+        raise HTTPException(status_code=400, detail="Project has no connected repository")
+
+    account = await get_active_github_account(db, user.id)
+    if not account:
+        raise HTTPException(status_code=400, detail="GitHub account disconnected")
+
+    token = decrypt_token(account.access_token_encrypted)
+    await run_repo_sync(db, project.repository, token)
+    repo_refresh_tracker[key] = now
+    await db.refresh(project.repository)
+    return {
+        "status": project.repository.sync_status.value,
+        "last_synced_at": project.repository.last_synced_at.isoformat() if project.repository.last_synced_at else None,
+        "sync_error": project.repository.sync_error,
+    }
 
 
 @api_router.put("/projects/{project_id}")
@@ -868,18 +1404,15 @@ async def create_project_update(project_id: str, data: ProjectUpdateCreate, user
     
     update = ProjectUpdate(
         project_id=project_id,
-        content=data.content
+        author_user_id=user.id,
+        title=data.title,
+        body=data.body,
+        update_type=ProjectUpdateType(data.update_type.value),
     )
     db.add(update)
     await db.commit()
     await db.refresh(update)
-    
-    return {
-        "id": update.id,
-        "project_id": update.project_id,
-        "content": update.content,
-        "created_at": update.created_at.isoformat() if update.created_at else None
-    }
+    return project_update_to_response(update)
 
 
 @api_router.get("/projects/{project_id}/updates")
@@ -898,17 +1431,7 @@ async def get_project_updates(project_id: str, limit: int = 20, offset: int = 0,
     result = await db.execute(query)
     updates = result.scalars().all()
     
-    return {
-        "items": [
-            {
-                "id": u.id,
-                "project_id": u.project_id,
-                "content": u.content,
-                "created_at": u.created_at.isoformat() if u.created_at else None
-            }
-            for u in updates
-        ]
-    }
+    return {"items": [project_update_to_response(u) for u in updates]}
 
 
 # ========== MILESTONES ENDPOINTS ==========
@@ -925,23 +1448,22 @@ async def create_milestone(project_id: str, data: MilestoneCreate, user: User = 
     
     milestone = Milestone(
         project_id=project_id,
-        title=data.title
+        title=data.title,
+        description=data.description,
+        status=MilestoneStatus(data.status.value),
+        due_date=data.due_date,
+        completed_at=datetime.now(timezone.utc) if data.status.value == "done" else None,
+        created_by_user_id=user.id,
     )
     db.add(milestone)
     await db.commit()
     await db.refresh(milestone)
     
-    return {
-        "id": milestone.id,
-        "project_id": milestone.project_id,
-        "title": milestone.title,
-        "is_completed": milestone.is_completed,
-        "created_at": milestone.created_at.isoformat() if milestone.created_at else None
-    }
+    return milestone_to_response(milestone)
 
 
-@api_router.patch("/milestones/{milestone_id}")
-async def update_milestone(milestone_id: str, data: MilestoneUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+@api_router.patch("/projects/{project_id}/milestones/{milestone_id}")
+async def update_milestone(project_id: str, milestone_id: str, data: MilestoneUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Milestone)
         .options(selectinload(Milestone.project))
@@ -957,19 +1479,24 @@ async def update_milestone(milestone_id: str, data: MilestoneUpdate, user: User 
     
     if data.title is not None:
         milestone.title = data.title
-    if data.is_completed is not None:
-        milestone.is_completed = data.is_completed
+    if data.description is not None:
+        milestone.description = data.description
+    if data.status is not None:
+        next_status = MilestoneStatus(data.status.value)
+        was_done = milestone.status == MilestoneStatus.done
+        milestone.status = next_status
+        if next_status == MilestoneStatus.done and milestone.completed_at is None:
+            milestone.completed_at = datetime.now(timezone.utc)
+        if was_done and next_status != MilestoneStatus.done:
+            milestone.completed_at = None
+    if data.due_date is not None:
+        milestone.due_date = data.due_date
+    milestone.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     await db.refresh(milestone)
     
-    return {
-        "id": milestone.id,
-        "project_id": milestone.project_id,
-        "title": milestone.title,
-        "is_completed": milestone.is_completed,
-        "created_at": milestone.created_at.isoformat() if milestone.created_at else None
-    }
+    return milestone_to_response(milestone)
 
 
 @api_router.get("/projects/{project_id}/milestones")
@@ -985,18 +1512,42 @@ async def get_project_milestones(project_id: str, db: AsyncSession = Depends(get
     )
     milestones = result.scalars().all()
     
-    return {
-        "items": [
-            {
-                "id": m.id,
-                "project_id": m.project_id,
-                "title": m.title,
-                "is_completed": m.is_completed,
-                "created_at": m.created_at.isoformat() if m.created_at else None
-            }
-            for m in milestones
-        ]
-    }
+    return {"items": [milestone_to_response(m) for m in milestones]}
+
+
+@api_router.get("/projects/{project_id}/activity")
+async def get_project_activity(project_id: str, db: AsyncSession = Depends(get_db)):
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    if not project_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    commits_result = await db.execute(
+        select(ProjectCommit).where(ProjectCommit.project_id == project_id).order_by(ProjectCommit.committed_at.desc()).limit(50)
+    )
+    updates_result = await db.execute(
+        select(ProjectUpdate).where(ProjectUpdate.project_id == project_id).order_by(ProjectUpdate.created_at.desc()).limit(50)
+    )
+    milestones_result = await db.execute(
+        select(Milestone).where(Milestone.project_id == project_id).order_by(Milestone.updated_at.desc()).limit(50)
+    )
+
+    commits = [
+        {
+            "id": c.id,
+            "commit_sha": c.commit_sha,
+            "author_login": c.author_login,
+            "author_name": c.author_name,
+            "message_headline": c.message_headline,
+            "message_body": c.message_body,
+            "committed_at": c.committed_at.isoformat() if c.committed_at else None,
+            "commit_url": c.commit_url,
+        }
+        for c in commits_result.scalars().all()
+    ]
+    updates = [project_update_to_response(u) for u in updates_result.scalars().all()]
+    milestones = [milestone_to_response(m) for m in milestones_result.scalars().all()]
+
+    return {"items": merge_project_activity(commits, updates, milestones)}
 
 
 # ========== COMMENTS ENDPOINTS ==========
@@ -1216,7 +1767,7 @@ async def get_feed(limit: int = 20, offset: int = 0, db: AsyncSession = Depends(
             items.append({
                 "id": u.id,
                 "type": "update",
-                "content": u.content,
+                "content": f"{u.title}\n\n{u.body}",
                 "project": project_to_response(u.project, include_user=True),
                 "created_at": u.created_at.isoformat() if u.created_at else None
             })
@@ -1354,59 +1905,69 @@ async def startup():
     
     logger.info("Database tables created/verified")
     
-    # Seed admin user
+    # Seed admin user (only when ADMIN_PASSWORD is set — no default password)
     async with AsyncSessionLocal() as db:
         admin_email = os.environ.get("ADMIN_EMAIL", "admin@mzansibuilds.com")
-        admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@123")
-        
-        result = await db.execute(select(User).where(User.email == admin_email))
-        existing = result.scalar_one_or_none()
-        
-        if not existing:
-            admin = User(
-                email=admin_email,
-                password_hash=hash_password(admin_password),
-                name="Admin",
-                role="admin",
-                auth_provider="email"
+        admin_password = (os.environ.get("ADMIN_PASSWORD") or "").strip() or None
+
+        if not admin_password:
+            logger.info(
+                "admin seed skipped: set ADMIN_PASSWORD in the environment to create or update the admin user"
             )
-            db.add(admin)
-            await db.commit()
-            await db.refresh(admin)
-            
-            # Create admin profile
-            profile = Profile(user_id=admin.id)
-            db.add(profile)
-            await db.commit()
-            
-            logger.info(f"Admin user created: {admin_email}")
-        elif not verify_password(admin_password, existing.password_hash):
-            existing.password_hash = hash_password(admin_password)
-            await db.commit()
-            logger.info(f"Admin password updated: {admin_email}")
-        
-        # Write credentials to file (optional; skip in CI or when path is not writable)
-        skip_file = os.environ.get("SKIP_ADMIN_CREDENTIALS_FILE", "").lower() in ("1", "true", "yes")
-        if not skip_file:
-            creds_dir = os.environ.get("ADMIN_CREDENTIALS_DIR", "/app/memory")
-            creds_path = os.path.join(creds_dir, "test_credentials.md")
-            try:
-                os.makedirs(creds_dir, exist_ok=True)
-                with open(creds_path, "w") as f:
-                    f.write("# Test Credentials\n\n")
-                    f.write("## Admin Account\n")
-                    f.write(f"- Email: {admin_email}\n")
-                    f.write(f"- Password: {admin_password}\n")
-                    f.write("- Role: admin\n\n")
-                    f.write("## Auth Endpoints\n")
-                    f.write("- POST /api/auth/register\n")
-                    f.write("- POST /api/auth/login\n")
-                    f.write("- POST /api/auth/logout\n")
-                    f.write("- GET /api/auth/me\n")
-                    f.write("- POST /api/auth/refresh\n")
-                    f.write("- POST /api/auth/google/session\n")
-            except OSError as e:
-                logger.warning("Could not write admin credentials file to %s: %s", creds_path, e)
+        else:
+            result = await db.execute(select(User).where(User.email == admin_email))
+            existing = result.scalar_one_or_none()
+
+            if not existing:
+                admin = User(
+                    email=admin_email,
+                    password_hash=hash_password(admin_password),
+                    name="Admin",
+                    role="admin",
+                    auth_provider="email",
+                )
+                db.add(admin)
+                await db.commit()
+                await db.refresh(admin)
+
+                profile = Profile(user_id=admin.id)
+                db.add(profile)
+                await db.commit()
+
+                logger.info("Admin user created: %s", admin_email)
+            elif not verify_password(admin_password, existing.password_hash):
+                existing.password_hash = hash_password(admin_password)
+                await db.commit()
+                logger.info("Admin password updated: %s", admin_email)
+
+            # Never write plaintext credentials unless explicitly enabled (local dev / QA only)
+            write_file = os.environ.get("WRITE_ADMIN_CREDENTIALS_FILE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if write_file:
+                creds_dir = os.environ.get("ADMIN_CREDENTIALS_DIR", "/app/memory")
+                creds_path = os.path.join(creds_dir, "test_credentials.md")
+                try:
+                    os.makedirs(creds_dir, exist_ok=True)
+                    with open(creds_path, "w") as f:
+                        f.write("# Test Credentials\n\n")
+                        f.write("## Admin Account\n")
+                        f.write(f"- Email: {admin_email}\n")
+                        f.write(f"- Password: {admin_password}\n")
+                        f.write("- Role: admin\n\n")
+                        f.write("## Auth Endpoints\n")
+                        f.write("- POST /api/auth/register\n")
+                        f.write("- POST /api/auth/login\n")
+                        f.write("- POST /api/auth/logout\n")
+                        f.write("- GET /api/auth/me\n")
+                        f.write("- POST /api/auth/refresh\n")
+                        f.write("- POST /api/auth/google/session\n")
+                except OSError as e:
+                    logger.warning(
+                        "Could not write admin credentials file to %s: %s", creds_path, e
+                    )
 
 
 @app.on_event("shutdown")
