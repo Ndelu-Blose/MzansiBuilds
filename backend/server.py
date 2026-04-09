@@ -9,7 +9,9 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, and_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
+from cachetools import TTLCache
 import os
 import base64
 import logging
@@ -49,11 +51,11 @@ from github_oauth_service import (
     build_authorization_url, exchange_code_for_token, fetch_authenticated_profile,
     encrypt_token, decrypt_token,
 )
-from github_api_service import list_user_repos, get_repo, get_repo_contributors
+from github_api_service import list_user_repos, get_repo_by_id, get_repo_contributors
 from project_import_service import create_imported_project
 from project_sync_service import run_repo_sync
 from project_activity_service import merge_project_activity
-from oauth_state_service import create_oauth_state, validate_oauth_state, mark_oauth_state_used, cleanup_expired_states
+from oauth_state_service import create_oauth_state, consume_oauth_state, cleanup_expired_states
 from email_service import (
     send_welcome_email, 
     send_collaboration_request_email,
@@ -84,7 +86,7 @@ def _oauth_session_data_url() -> str:
 # App setup
 app = FastAPI(title="MzansiBuilds API", version="1.0.0")
 api_router = APIRouter(prefix="/api")
-repo_refresh_tracker: dict[str, datetime] = {}
+repo_refresh_tracker: TTLCache = TTLCache(maxsize=10_000, ttl=60)
 
 
 # ========== Password Utilities ==========
@@ -343,6 +345,20 @@ def project_to_response(project: Project, include_user: bool = False) -> dict:
         response["user"] = user_to_response(project.user)
     
     return response
+
+
+def decrypt_connected_account_token_or_400(account: ConnectedAccount) -> str:
+    try:
+        return decrypt_token(account.access_token_encrypted)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="GitHub token is invalid or expired. Please reconnect GitHub.")
+
+
+def encrypt_connected_account_token_or_503(token: str) -> str:
+    try:
+        return encrypt_token(token)
+    except ValueError:
+        raise HTTPException(status_code=503, detail="GITHUB_TOKEN_SECRET is not configured securely")
 
 
 def project_update_to_response(update: ProjectUpdate) -> dict:
@@ -743,7 +759,7 @@ async def github_callback(code: str, state: Optional[str] = None, db: AsyncSessi
     if not state:
         raise HTTPException(status_code=400, detail="Missing OAuth state")
     try:
-        oauth_state = await validate_oauth_state(db, state, ConnectedProvider.github)
+        oauth_state = await consume_oauth_state(db, state, ConnectedProvider.github)
     except ValueError as exc:
         reason = str(exc)
         if reason == "expired":
@@ -754,6 +770,7 @@ async def github_callback(code: str, state: Optional[str] = None, db: AsyncSessi
 
     token = await exchange_code_for_token(code)
     profile = await fetch_authenticated_profile(token)
+    encrypted_token = encrypt_connected_account_token_or_503(token)
     provider_account_id = profile.get("id")
     if not provider_account_id:
         raise HTTPException(status_code=400, detail="GitHub profile missing id")
@@ -764,13 +781,25 @@ async def github_callback(code: str, state: Optional[str] = None, db: AsyncSessi
         frontend_url = (os.environ.get("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
         return RedirectResponse(url=f"{frontend_url}/dashboard?github_connect=failed", status_code=302)
 
+    linked_result = await db.execute(
+        select(ConnectedAccount).where(
+            ConnectedAccount.provider == ConnectedProvider.github,
+            ConnectedAccount.provider_account_id == provider_account_id,
+            ConnectedAccount.is_active.is_(True),
+        )
+    )
+    linked_account = linked_result.scalar_one_or_none()
+    if linked_account and linked_account.user_id != current_user.id:
+        frontend_url = (os.environ.get("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
+        return RedirectResponse(url=f"{frontend_url}/dashboard?github_connect=already_linked", status_code=302)
+
     existing = await get_active_github_account(db, current_user.id)
     if existing:
         existing.provider_account_id = provider_account_id
         existing.provider_username = profile.get("login") or ""
         existing.provider_display_name = profile.get("name")
         existing.avatar_url = profile.get("avatar_url")
-        existing.access_token_encrypted = encrypt_token(token)
+        existing.access_token_encrypted = encrypted_token
         existing.last_used_at = datetime.now(timezone.utc)
     else:
         db.add(
@@ -781,7 +810,7 @@ async def github_callback(code: str, state: Optional[str] = None, db: AsyncSessi
                 provider_username=profile.get("login") or "",
                 provider_display_name=profile.get("name"),
                 avatar_url=profile.get("avatar_url"),
-                access_token_encrypted=encrypt_token(token),
+                access_token_encrypted=encrypted_token,
                 is_active=True,
             )
         )
@@ -799,8 +828,12 @@ async def github_callback(code: str, state: Optional[str] = None, db: AsyncSessi
             user_profile.github_url = f"https://github.com/{github_login}"
         user_profile.updated_at = datetime.now(timezone.utc)
 
-    await db.commit()
-    await mark_oauth_state_used(db, oauth_state.id)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        frontend_url = (os.environ.get("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
+        return RedirectResponse(url=f"{frontend_url}/dashboard?github_connect=already_linked", status_code=302)
     frontend_url = (os.environ.get("FRONTEND_URL") or "http://localhost:3000").rstrip("/")
     return RedirectResponse(url=f"{frontend_url}/dashboard?github_connect=success", status_code=302)
 
@@ -845,8 +878,8 @@ async def github_repos(page: int = 1, per_page: int = 30, search: Optional[str] 
     account = await get_active_github_account(db, user.id)
     if not account:
         raise HTTPException(status_code=400, detail="Connect GitHub first")
-    token = decrypt_token(account.access_token_encrypted)
-    repos = await list_user_repos(token, page=1, per_page=100)
+    token = decrypt_connected_account_token_or_400(account)
+    repos = await list_user_repos(token, page=page, per_page=per_page)
     if search:
         search_lower = search.lower().strip()
         repos = [
@@ -857,9 +890,6 @@ async def github_repos(page: int = 1, per_page: int = 30, search: Optional[str] 
             or search_lower in (r.get("language") or "").lower()
         ]
     total = len(repos)
-    start = max((page - 1) * per_page, 0)
-    end = start + per_page
-    paged_repos = repos[start:end]
     items = [
         {
             "github_repo_id": r["id"],
@@ -876,7 +906,7 @@ async def github_repos(page: int = 1, per_page: int = 30, search: Optional[str] 
             "contributor_match": not ((r.get("owner") or {}).get("id") == account.provider_account_id),
             "visibility": "private" if r.get("private") else "public",
         }
-        for r in paged_repos
+        for r in repos
     ]
     return {"items": items, "total": total, "page": page, "per_page": per_page}
 
@@ -992,14 +1022,14 @@ async def import_project_from_github(
     if not account:
         raise HTTPException(status_code=400, detail="Connect GitHub account first")
 
-    token = decrypt_token(account.access_token_encrypted)
-    repos = await list_user_repos(token, page=1, per_page=100)
-    selected = next((r for r in repos if r.get("id") == data.github_repo_id), None)
-    if not selected:
-        raise HTTPException(status_code=403, detail="Selected repository is not accessible for connected account")
-
-    repo_data = await get_repo(token, selected["owner"]["login"], selected["name"])
-    contributors = await get_repo_contributors(token, selected["owner"]["login"], selected["name"], limit=100)
+    token = decrypt_connected_account_token_or_400(account)
+    try:
+        repo_data = await get_repo_by_id(token, data.github_repo_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response is not None and exc.response.status_code in (403, 404):
+            raise HTTPException(status_code=403, detail="Selected repository is not accessible for connected account")
+        raise
+    contributors = await get_repo_contributors(token, repo_data["owner"]["login"], repo_data["name"], limit=100)
     contributor_ids = {c.get("id") for c in contributors if c.get("id")}
 
     project_payload = {
@@ -1175,7 +1205,7 @@ async def list_projects(
 
 
 @api_router.get("/projects/{project_id}")
-async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
+async def get_project(project_id: str, db: AsyncSession = Depends(get_db), viewer: Optional[User] = Depends(get_optional_user)):
     result = await db.execute(
         select(Project)
         .options(
@@ -1198,6 +1228,9 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
     response["milestones"] = [milestone_to_response(m) for m in project.milestones]
     response["updates_count"] = len(project.updates)
     response["comments_count"] = len(project.comments)
+    can_view_repo_intelligence = True
+    if project.repository and project.repository.visibility == "private":
+        can_view_repo_intelligence = bool(viewer and viewer.id == project.user_id)
     response["contributors"] = [
         {
             "github_user_id": c.github_user_id,
@@ -1208,7 +1241,7 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
             "is_verified": c.is_verified,
         }
         for c in project.repo_contributors
-    ]
+    ] if can_view_repo_intelligence else []
     response["recent_commits"] = [
         {
             "sha": c.commit_sha,
@@ -1218,8 +1251,8 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
             "commit_url": c.commit_url,
         }
         for c in sorted(project.commits, key=lambda item: item.committed_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)[:10]
-    ]
-    if project.repository:
+    ] if can_view_repo_intelligence else []
+    if project.repository and can_view_repo_intelligence:
         repo = project.repository
         langs_result = await db.execute(select(ProjectLanguage).where(ProjectLanguage.project_repository_id == repo.id))
         languages = langs_result.scalars().all()
@@ -1281,9 +1314,7 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db)):
 @api_router.post("/projects/{project_id}/refresh")
 async def refresh_project_repo(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     key = f"{user.id}:{project_id}"
-    now = datetime.now(timezone.utc)
-    last = repo_refresh_tracker.get(key)
-    if last and (now - last).total_seconds() < 60:
+    if key in repo_refresh_tracker:
         raise HTTPException(status_code=429, detail="Refresh rate limit exceeded. Try again in a minute.")
     result = await db.execute(
         select(Project).options(selectinload(Project.repository)).where(Project.id == project_id)
@@ -1300,9 +1331,9 @@ async def refresh_project_repo(project_id: str, user: User = Depends(get_current
     if not account:
         raise HTTPException(status_code=400, detail="GitHub account disconnected")
 
-    token = decrypt_token(account.access_token_encrypted)
+    token = decrypt_connected_account_token_or_400(account)
     await run_repo_sync(db, project.repository, token)
-    repo_refresh_tracker[key] = now
+    repo_refresh_tracker[key] = datetime.now(timezone.utc)
     await db.refresh(project.repository)
     return {
         "status": project.repository.sync_status.value,
@@ -1516,10 +1547,16 @@ async def get_project_milestones(project_id: str, db: AsyncSession = Depends(get
 
 
 @api_router.get("/projects/{project_id}/activity")
-async def get_project_activity(project_id: str, db: AsyncSession = Depends(get_db)):
-    project_result = await db.execute(select(Project).where(Project.id == project_id))
-    if not project_result.scalar_one_or_none():
+async def get_project_activity(project_id: str, db: AsyncSession = Depends(get_db), viewer: Optional[User] = Depends(get_optional_user)):
+    project_result = await db.execute(
+        select(Project).options(selectinload(Project.repository)).where(Project.id == project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    include_repo_activity = True
+    if project.repository and project.repository.visibility == "private":
+        include_repo_activity = bool(viewer and viewer.id == project.user_id)
 
     commits_result = await db.execute(
         select(ProjectCommit).where(ProjectCommit.project_id == project_id).order_by(ProjectCommit.committed_at.desc()).limit(50)
@@ -1543,7 +1580,7 @@ async def get_project_activity(project_id: str, db: AsyncSession = Depends(get_d
             "commit_url": c.commit_url,
         }
         for c in commits_result.scalars().all()
-    ]
+    ] if include_repo_activity else []
     updates = [project_update_to_response(u) for u in updates_result.scalars().all()]
     milestones = [milestone_to_response(m) for m in milestones_result.scalars().all()]
 

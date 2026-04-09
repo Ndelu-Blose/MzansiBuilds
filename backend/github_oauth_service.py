@@ -6,6 +6,7 @@ import secrets
 from urllib.parse import urlencode
 
 import httpx
+from cryptography.fernet import Fernet, InvalidToken
 
 
 GITHUB_OAUTH_URL = "https://github.com/login/oauth/authorize"
@@ -44,19 +45,23 @@ def hash_state(state: str) -> str:
     return hmac.new(state_secret, state.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def _token_cipher() -> Fernet:
+    secret = (os.environ.get("GITHUB_TOKEN_SECRET") or "").strip()
+    if len(secret) < 32:
+        raise ValueError("GITHUB_TOKEN_SECRET must be set to at least 32 characters")
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
+    return Fernet(key)
+
+
 def encrypt_token(token: str) -> str:
-    secret = (os.environ.get("GITHUB_TOKEN_SECRET") or "dev-token-secret").encode("utf-8")
-    raw = token.encode("utf-8")
-    key = secret * ((len(raw) // len(secret)) + 1)
-    encrypted = bytes([raw[i] ^ key[i] for i in range(len(raw))])
-    return base64.urlsafe_b64encode(encrypted).decode("ascii")
+    return _token_cipher().encrypt(token.encode("utf-8")).decode("ascii")
 
 
 def decrypt_token(token_cipher: str) -> str:
-    secret = (os.environ.get("GITHUB_TOKEN_SECRET") or "dev-token-secret").encode("utf-8")
-    raw = base64.urlsafe_b64decode(token_cipher.encode("ascii"))
-    key = secret * ((len(raw) // len(secret)) + 1)
-    plain = bytes([raw[i] ^ key[i] for i in range(len(raw))])
+    try:
+        plain = _token_cipher().decrypt(token_cipher.encode("ascii"))
+    except (InvalidToken, ValueError):
+        raise ValueError("Invalid encrypted GitHub token")
     return plain.decode("utf-8")
 
 

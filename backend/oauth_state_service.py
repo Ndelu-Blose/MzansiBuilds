@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from github_oauth_service import hash_state
@@ -51,6 +51,37 @@ async def validate_oauth_state(db: AsyncSession, raw_state: str, provider: Conne
     if err:
         raise ValueError(err)
     return record
+
+
+async def consume_oauth_state(db: AsyncSession, raw_state: str, provider: ConnectedProvider) -> OAuthState:
+    now = datetime.now(timezone.utc)
+    state_hash = hash_state(raw_state)
+
+    result = await db.execute(
+        update(OAuthState)
+        .where(
+            OAuthState.state_hash == state_hash,
+            OAuthState.provider == provider,
+            OAuthState.used_at.is_(None),
+            OAuthState.expires_at > now,
+        )
+        .values(used_at=now)
+        .returning(OAuthState)
+    )
+    record = result.scalar_one_or_none()
+    if record:
+        await db.commit()
+        return record
+
+    check_result = await db.execute(
+        select(OAuthState).where(
+            OAuthState.state_hash == state_hash,
+            OAuthState.provider == provider,
+        )
+    )
+    existing = check_result.scalar_one_or_none()
+    err = oauth_state_error(existing, now)
+    raise ValueError(err or "invalid")
 
 
 async def mark_oauth_state_used(db: AsyncSession, state_id: str) -> None:
