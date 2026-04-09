@@ -42,6 +42,13 @@ async def get_repo(token: str, owner: str, repo: str) -> dict:
     return resp.json()
 
 
+async def get_repo_by_id(token: str, repo_id: int) -> dict:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(f"{BASE_URL}/repositories/{repo_id}", headers=_headers(token))
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def get_repo_languages(token: str, owner: str, repo: str) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(f"{BASE_URL}/repos/{owner}/{repo}/languages", headers=_headers(token))
