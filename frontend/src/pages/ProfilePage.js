@@ -32,8 +32,34 @@ export default function ProfilePage() {
   const fileInputRef = useRef(null);
 
   useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const response = await profileAPI.get();
+        const data = response.data;
+        const nextForm = {
+          displayName: data.display_name || user?.name || '',
+          username: data.username || user?.username || '',
+          headline: data.headline || '',
+          location: data.location || '',
+          bio: data.bio || '',
+          githubUrl: data.github_url || '',
+          linkedinUrl: data.linkedin_url || '',
+          portfolioUrl: data.portfolio_url || '',
+          avatarUrl: data.avatar_url || user?.picture || '',
+          skills: data.skills || [],
+        };
+        setForm(nextForm);
+        setInitialForm(nextForm);
+      } catch (error) {
+        console.error('Error fetching profile:', error);
+        setErrorMessage('Could not load your profile. Please refresh and try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchProfile();
-  }, [user?.id]);
+  }, [user?.id, user?.name, user?.username, user?.picture]);
 
   useEffect(() => {
     setAvatarLoadFailed(false);
@@ -53,32 +79,6 @@ export default function ProfilePage() {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
-
-  const fetchProfile = async () => {
-    try {
-      const response = await profileAPI.get();
-      const data = response.data;
-      const nextForm = {
-        displayName: data.display_name || user?.name || '',
-        username: data.username || user?.username || '',
-        headline: data.headline || '',
-        location: data.location || '',
-        bio: data.bio || '',
-        githubUrl: data.github_url || '',
-        linkedinUrl: data.linkedin_url || '',
-        portfolioUrl: data.portfolio_url || '',
-        avatarUrl: data.avatar_url || user?.picture || '',
-        skills: data.skills || [],
-      };
-      setForm(nextForm);
-      setInitialForm(nextForm);
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-      setErrorMessage('Could not load your profile. Please refresh and try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const setField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
