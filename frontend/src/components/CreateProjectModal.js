@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { githubAPI, projectsAPI } from '../lib/api';
 import { X, Loader2, Github, Search, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -44,13 +44,7 @@ export default function CreateProjectModal({ onClose, onCreated }) {
     return () => clearTimeout(id);
   }, [repoSearchInput, mode]);
 
-  useEffect(() => {
-    if (mode === 'github') {
-      loadGitHub(repoPage, repoSearch);
-    }
-  }, [mode, repoPage, repoSearch]);
-
-  const loadGitHub = async (page = 1, search = '') => {
+  const loadGitHub = useCallback(async (page = 1, search = '') => {
     setRepoLoading(true);
     setRepoError('');
     try {
@@ -69,7 +63,13 @@ export default function CreateProjectModal({ onClose, onCreated }) {
     } finally {
       setRepoLoading(false);
     }
-  };
+  }, [repoPerPage]);
+
+  useEffect(() => {
+    if (mode === 'github') {
+      loadGitHub(repoPage, repoSearch);
+    }
+  }, [mode, repoPage, repoSearch, loadGitHub]);
 
   const startGithubConnect = async () => {
     setRepoError('');
