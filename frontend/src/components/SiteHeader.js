@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Rss, Trophy, FolderKanban, LogOut, Menu, X, Code } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -28,6 +28,11 @@ export default function SiteHeader({ variant = 'app' }) {
   const { user, logout, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [user?.picture]);
 
   const handleLogout = async () => {
     await logout();
@@ -80,8 +85,13 @@ export default function SiteHeader({ variant = 'app' }) {
                   className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
                   data-testid="profile-link"
                 >
-                  {user?.picture ? (
-                    <img src={user.picture} alt={user.name || ''} className="w-8 h-8 rounded-full ring-2 ring-border" />
+                  {user?.picture && !avatarLoadFailed ? (
+                    <img
+                      src={user.picture}
+                      alt={user.name || ''}
+                      className="w-8 h-8 rounded-full ring-2 ring-border"
+                      onError={() => setAvatarLoadFailed(true)}
+                    />
                   ) : (
                     <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
                       {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase()}

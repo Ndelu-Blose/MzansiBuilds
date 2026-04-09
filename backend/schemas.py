@@ -19,6 +19,40 @@ class CollaborationStatusEnum(str, Enum):
     rejected = "rejected"
 
 
+class ProjectUpdateTypeEnum(str, Enum):
+    progress = "progress"
+    milestone = "milestone"
+    blocker = "blocker"
+    learning = "learning"
+    release = "release"
+
+
+class MilestoneStatusEnum(str, Enum):
+    planned = "planned"
+    active = "active"
+    done = "done"
+    dropped = "dropped"
+
+
+class ProjectTypeEnum(str, Enum):
+    idea = "idea"
+    repo_backed = "repo_backed"
+
+
+class VerificationStatusEnum(str, Enum):
+    verified_owner = "verified_owner"
+    verified_contributor = "verified_contributor"
+    unverified = "unverified"
+    disconnected = "disconnected"
+
+
+class OwnershipTypeEnum(str, Enum):
+    owner = "owner"
+    contributor = "contributor"
+    external = "external"
+    none = "none"
+
+
 # ========== User Schemas ==========
 class UserBase(BaseModel):
     email: EmailStr
@@ -42,6 +76,7 @@ class UserResponse(BaseModel):
     id: str
     email: str
     name: Optional[str] = None
+    username: Optional[str] = None
     role: str
     auth_provider: str
     picture: Optional[str] = None
@@ -54,9 +89,16 @@ class UserWithProfile(UserResponse):
 
 # ========== Profile Schemas ==========
 class ProfileBase(BaseModel):
+    display_name: Optional[str] = Field(None, min_length=1, max_length=255)
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
     bio: Optional[str] = None
+    headline: Optional[str] = Field(None, max_length=255)
+    location: Optional[str] = Field(None, max_length=255)
     skills: Optional[List[str]] = None
     github_url: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    portfolio_url: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 
 class ProfileCreate(ProfileBase):
@@ -72,9 +114,16 @@ class ProfileResponse(BaseModel):
     
     id: str
     user_id: str
+    display_name: Optional[str] = None
+    username: Optional[str] = None
     bio: Optional[str] = None
+    headline: Optional[str] = None
+    location: Optional[str] = None
     skills: Optional[List[str]] = None
     github_url: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    portfolio_url: Optional[str] = None
+    avatar_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -110,8 +159,77 @@ class ProjectResponse(BaseModel):
     tech_stack: Optional[List[str]] = None
     stage: ProjectStageEnum
     support_needed: Optional[str] = None
+    project_type: Optional[ProjectTypeEnum] = ProjectTypeEnum.idea
+    verification_status: Optional[VerificationStatusEnum] = VerificationStatusEnum.unverified
+    ownership_type: Optional[OwnershipTypeEnum] = OwnershipTypeEnum.none
+    repo_connected: Optional[bool] = False
     created_at: datetime
     updated_at: datetime
+
+
+class GitHubConnectStartResponse(BaseModel):
+    authorization_url: str
+    state: str
+
+
+class GitHubAccountResponse(BaseModel):
+    connected: bool
+    username: Optional[str] = None
+    avatar_url: Optional[str] = None
+    scopes: Optional[str] = None
+    connected_at: Optional[datetime] = None
+
+
+class GitHubRepoSummary(BaseModel):
+    github_repo_id: int
+    name: str
+    full_name: str
+    owner_login: str
+    owner_id: int
+    private: bool
+    description: Optional[str] = None
+    updated_at: Optional[str] = None
+    pushed_at: Optional[str] = None
+    language: Optional[str] = None
+    owner_match: Optional[bool] = False
+    contributor_match: Optional[bool] = False
+    visibility: Optional[str] = None
+
+
+class GitHubRepoListResponse(BaseModel):
+    items: List[GitHubRepoSummary]
+    total: int
+    page: int
+    per_page: int
+
+
+class ImportGitHubProjectRequest(BaseModel):
+    github_repo_id: int
+    title: Optional[str] = None
+    stage: ProjectStageEnum = ProjectStageEnum.idea
+    short_pitch: Optional[str] = None
+    long_description: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    looking_for_help: Optional[bool] = False
+    roles_needed: Optional[List[str]] = None
+    demo_url: Optional[str] = None
+    problem_statement: Optional[str] = None
+    roadmap_summary: Optional[str] = None
+
+
+class CreateManualProjectRequest(BaseModel):
+    title: str
+    short_pitch: Optional[str] = None
+    long_description: Optional[str] = None
+    stage: ProjectStageEnum = ProjectStageEnum.idea
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    looking_for_help: Optional[bool] = False
+    roles_needed: Optional[List[str]] = None
+    problem_statement: Optional[str] = None
+    roadmap_summary: Optional[str] = None
+    optional_repo_url: Optional[str] = None
 
 
 class ProjectWithOwner(ProjectResponse):
@@ -126,7 +244,9 @@ class ProjectDetail(ProjectWithOwner):
 
 # ========== Project Update Schemas ==========
 class ProjectUpdateBase(BaseModel):
-    content: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=255)
+    body: str = Field(min_length=1)
+    update_type: ProjectUpdateTypeEnum
 
 
 class ProjectUpdateCreate(ProjectUpdateBase):
@@ -138,8 +258,12 @@ class ProjectUpdateResponse(BaseModel):
     
     id: str
     project_id: str
-    content: str
+    author_user_id: str
+    title: str
+    body: str
+    update_type: ProjectUpdateTypeEnum
     created_at: datetime
+    updated_at: datetime
 
 
 class ProjectUpdateWithProject(ProjectUpdateResponse):
@@ -149,6 +273,9 @@ class ProjectUpdateWithProject(ProjectUpdateResponse):
 # ========== Milestone Schemas ==========
 class MilestoneBase(BaseModel):
     title: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = None
+    status: MilestoneStatusEnum = MilestoneStatusEnum.planned
+    due_date: Optional[datetime] = None
 
 
 class MilestoneCreate(MilestoneBase):
@@ -157,7 +284,9 @@ class MilestoneCreate(MilestoneBase):
 
 class MilestoneUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=1, max_length=255)
-    is_completed: Optional[bool] = None
+    description: Optional[str] = None
+    status: Optional[MilestoneStatusEnum] = None
+    due_date: Optional[datetime] = None
 
 
 class MilestoneResponse(BaseModel):
@@ -166,8 +295,13 @@ class MilestoneResponse(BaseModel):
     id: str
     project_id: str
     title: str
-    is_completed: bool
+    description: Optional[str] = None
+    status: MilestoneStatusEnum
+    due_date: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_by_user_id: str
     created_at: datetime
+    updated_at: datetime
 
 
 # ========== Comment Schemas ==========

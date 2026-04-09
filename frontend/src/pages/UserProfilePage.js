@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { profileAPI } from '../lib/api';
-import { Loader2, Github, Code, Trophy, Zap, ExternalLink, FolderKanban, Calendar } from 'lucide-react';
+import { Loader2, Github, Code, Trophy, Zap, ExternalLink, FolderKanban, Calendar, MapPin, Linkedin, Globe } from 'lucide-react';
 import Layout from '../components/Layout';
 import ProjectCard from '../components/ProjectCard';
 
@@ -59,8 +59,12 @@ export default function UserProfilePage() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="user-profile-page">
         <div className="bg-card border border-border rounded-xl shadow-card p-8 mb-8">
           <div className="flex flex-col sm:flex-row items-start gap-6">
-            {userData.picture ? (
-              <img src={userData.picture} alt={userData.name || ''} className="w-24 h-24 rounded-full ring-2 ring-border" />
+            {profile?.avatar_url || userData.picture ? (
+              <img
+                src={profile?.avatar_url || userData.picture}
+                alt={userData.name || ''}
+                className="w-24 h-24 rounded-full ring-2 ring-border object-cover"
+              />
             ) : (
               <div className="w-24 h-24 bg-muted rounded-full flex items-center justify-center text-3xl font-bold text-foreground">
                 {userData.name?.[0]?.toUpperCase() || userData.email?.[0]?.toUpperCase()}
@@ -68,7 +72,9 @@ export default function UserProfilePage() {
             )}
 
             <div className="flex-1">
-              <h1 className="text-2xl font-bold text-foreground mb-1">{userData.name || 'Developer'}</h1>
+              <h1 className="text-2xl font-bold text-foreground mb-1">{profile?.display_name || userData.name || 'Developer'}</h1>
+              {profile?.username && <p className="text-sm text-muted-foreground mb-1">@{profile.username}</p>}
+              {profile?.headline && <p className="text-sm text-foreground/90 mb-2">{profile.headline}</p>}
               <p className="text-muted-foreground mb-4">{userData.email}</p>
 
               {profile?.bio && <p className="text-foreground mb-4">{profile.bio}</p>}
@@ -95,6 +101,36 @@ export default function UserProfilePage() {
                     GitHub
                     <ExternalLink className="w-3 h-3" />
                   </a>
+                )}
+                {profile?.linkedin_url && (
+                  <a
+                    href={profile.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-primary hover:text-primary-hover transition-colors font-medium"
+                  >
+                    <Linkedin className="w-5 h-5" />
+                    LinkedIn
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+                {profile?.portfolio_url && (
+                  <a
+                    href={profile.portfolio_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-primary hover:text-primary-hover transition-colors font-medium"
+                  >
+                    <Globe className="w-5 h-5" />
+                    Portfolio
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
+                {profile?.location && (
+                  <span className="text-muted-foreground text-sm flex items-center gap-1">
+                    <MapPin className="w-4 h-4" />
+                    {profile.location}
+                  </span>
                 )}
                 <span className="text-muted-foreground text-sm flex items-center gap-1">
                   <Calendar className="w-4 h-4" />

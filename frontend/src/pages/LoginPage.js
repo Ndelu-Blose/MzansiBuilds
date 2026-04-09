@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { isSupabaseConfigured } from '../lib/supabase';
-import { Mail, Lock, User, Loader2, AlertCircle, Github } from 'lucide-react';
+import { Mail, Lock, User, Loader2, AlertCircle, Github, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const inputClass =
@@ -13,14 +13,67 @@ function formatApiErrorDetail(detail) {
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail))
     return detail.map((e) => (e && typeof e.msg === 'string' ? e.msg : JSON.stringify(e))).filter(Boolean).join(' ');
+  if (detail && typeof detail === 'object') {
+    const message = detail.message || detail.detail || detail.msg;
+    const hint = detail.hint;
+    if (message && hint) return `${message} ${hint}`;
+    if (message) return String(message);
+  }
   if (detail && typeof detail.msg === 'string') return detail.msg;
   return String(detail);
+}
+
+function getFriendlyAuthError(err, { isLogin }) {
+  const code = (err?.code || '').toLowerCase();
+  const raw =
+    formatApiErrorDetail(err?.response?.data?.detail || err?.message || err?.error_description || err?.description) ||
+    '';
+  const msg = raw.toLowerCase();
+
+  if (!isLogin && (msg.includes('error sending confirmation email') || msg.includes('sending confirmation email'))) {
+    return 'We could not send your verification email right now. Please tap "Try again", and if it still fails, use Continue with Google or Continue with GitHub.';
+  }
+
+  if (!isLogin && (msg.includes('smtp') || msg.includes('mailer') || code.includes('smtp'))) {
+    return 'Email signup is temporarily unavailable. Please try again in a moment, or continue with Google/GitHub.';
+  }
+
+  if (msg.includes('invalid login credentials')) {
+    return 'Incorrect email or password. Please try again.';
+  }
+
+  if (isLogin && isEmailNotConfirmed(err)) {
+    return 'Your email is not verified yet. Check your inbox for the confirmation link, or resend it below.';
+  }
+
+  return raw || 'Something went wrong. Please try again.';
 }
 
 function isEmailNotConfirmed(err) {
   const code = err?.code || '';
   const msg = (err?.message || '').toLowerCase();
   return code === 'email_not_confirmed' || msg.includes('email not confirmed');
+}
+
+function isAlreadyRegistered(err) {
+  const code = (err?.code || '').toLowerCase();
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    code.includes('user_already_exists') ||
+    code.includes('email_exists') ||
+    msg.includes('already registered') ||
+    msg.includes('already exists')
+  );
+}
+
+function isLikelySocialAccountConflict(err) {
+  const msg = (err?.message || '').toLowerCase();
+  return (
+    msg.includes('identity') ||
+    msg.includes('provider') ||
+    msg.includes('oauth') ||
+    msg.includes('social')
+  );
 }
 
 function maskEmail(value) {
@@ -45,6 +98,8 @@ export default function LoginPage() {
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMessage, setForgotMessage] = useState('');
   const [infoBanner, setInfoBanner] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showHelpPanel, setShowHelpPanel] = useState(false);
 
   const { login, register, resendSignupConfirmation, requestPasswordReset, loginWithGoogle, loginWithGitHub } =
     useAuth();
@@ -77,25 +132,47 @@ export default function LoginPage() {
     setShowResendForLogin(false);
 
     try {
+      const trimmedEmail = email.trim();
+      const trimmedName = name.trim();
+
       if (isLogin) {
-        await login(email, password);
+        await login(trimmedEmail, password);
         navigate('/dashboard');
       } else {
-        const data = await register(email, password, name);
+        if (!trimmedName) {
+          throw new Error('Please add your name to finish creating your account.');
+        }
+        const data = await register(trimmedEmail, password, trimmedName);
         if (data?.session) {
           navigate('/dashboard');
         } else {
-          setPendingVerificationEmail(email);
+          setPendingVerificationEmail(trimmedEmail);
         }
       }
     } catch (err) {
+      if (!isLogin && isAlreadyRegistered(err)) {
+        const target = email.trim();
+        if (isLikelySocialAccountConflict(err)) {
+          setIsLogin(true);
+          setError(
+            'This email is already linked to a social account. Sign in with Continue with GitHub or Continue with Google.'
+          );
+          setPendingVerificationEmail(null);
+        } else {
+          setError(
+            'An account with this email already exists. If it is not verified yet, resend the confirmation email.'
+          );
+          setPendingVerificationEmail(target || null);
+        }
+        return;
+      }
       if (isLogin && isEmailNotConfirmed(err)) {
         setError(
           'Your email is not verified yet. Check your inbox for the confirmation link, or resend it below.'
         );
         setShowResendForLogin(true);
       } else {
-        setError(formatApiErrorDetail(err.message) || 'Authentication failed');
+        setError(getFriendlyAuthError(err, { isLogin }));
       }
     } finally {
       setLoading(false);
@@ -259,6 +336,32 @@ export default function LoginPage() {
               <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
               <div className="text-destructive text-sm space-y-2">
                 <p>{error}</p>
+                {!isLogin && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="border-destructive/40 text-destructive hover:bg-destructive/10"
+                      disabled={loading}
+                      onClick={(e) => handleSubmit(e)}
+                    >
+                      Try again
+                    </Button>
+                    <button
+                      type="button"
+                      className="text-xs underline underline-offset-2"
+                      onClick={() => setShowHelpPanel((prev) => !prev)}
+                    >
+                      {showHelpPanel ? 'Hide help' : 'Need help?'}
+                    </button>
+                  </div>
+                )}
+                {!isLogin && showHelpPanel && (
+                  <div className="text-xs text-foreground/80 bg-background/60 rounded-md p-2 border border-border">
+                    You can continue with Google or GitHub now and finish setup in seconds. If you prefer email signup, wait a minute and try again.
+                  </div>
+                )}
                 {showResendForLogin && isSupabaseConfigured && (
                   <Button
                     type="button"
@@ -452,15 +555,24 @@ export default function LoginPage() {
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                     <input
                       id="auth-password-input"
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
                       required
                       minLength={6}
-                      className={inputClass}
+                      className={`${inputClass} pr-12`}
                       data-testid="password-input"
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      data-testid="toggle-password-visibility"
+                    >
+                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
                   </div>
                 </div>
 
