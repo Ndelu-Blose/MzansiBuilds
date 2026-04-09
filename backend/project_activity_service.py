@@ -49,6 +49,7 @@ def merge_project_activity(commits: list[dict], updates: list[dict], milestones:
                 },
             }
         )
+
     def parse_dt(value):
         if not value:
             return datetime.min.replace(tzinfo=timezone.utc)
