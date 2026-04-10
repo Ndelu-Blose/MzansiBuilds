@@ -1,14 +1,18 @@
 # Database configuration for Supabase PostgreSQL
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
-load_dotenv(Path(__file__).parent / '.env')
+load_dotenv(Path(__file__).parent / '.env', override=True)
 
-DATABASE_URL = os.environ.get('DATABASE_URL')
-ASYNC_DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+asyncpg://')
+_raw_db = os.environ.get('DATABASE_URL') or ''
+if _raw_db.startswith('postgres://'):
+    _raw_db = 'postgresql://' + _raw_db[len('postgres://') :]
+DATABASE_URL = _raw_db or None
+ASYNC_DATABASE_URL = (DATABASE_URL or '').replace('postgresql://', 'postgresql+asyncpg://')
 
 engine = create_async_engine(
     ASYNC_DATABASE_URL,
