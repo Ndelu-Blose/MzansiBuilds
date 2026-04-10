@@ -75,6 +75,44 @@ JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
+
+def _build_allowed_origins() -> List[str]:
+    raw_origins = (os.environ.get("CORS_ALLOW_ORIGINS") or "").strip()
+    origins = [origin.strip().rstrip("/") for origin in raw_origins.split(",") if origin.strip()]
+
+    frontend_url = (os.environ.get("FRONTEND_URL") or "").strip().rstrip("/")
+    if frontend_url:
+        origins.append(frontend_url)
+
+    # Keep local development origins available by default.
+    origins.extend(
+        [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3010",
+            "http://127.0.0.1:3010",
+        ]
+    )
+
+    # Preserve order while removing duplicates.
+    return list(dict.fromkeys(origins))
+
+
+def _cookies_should_be_secure() -> bool:
+    explicit = (os.environ.get("COOKIE_SECURE") or "").strip().lower()
+    if explicit in ("1", "true", "yes"):
+        return True
+    if explicit in ("0", "false", "no"):
+        return False
+
+    frontend_url = (os.environ.get("FRONTEND_URL") or "").strip().lower()
+    return frontend_url.startswith("https://")
+
+
+COOKIE_SECURE = _cookies_should_be_secure()
+COOKIE_SAMESITE = "none" if COOKIE_SECURE else "lax"
+ALLOWED_ORIGINS = _build_allowed_origins()
+
 # Google OAuth session exchange (override via OAUTH_SESSION_DATA_URL in .env)
 def _oauth_session_data_url() -> str:
     raw = os.environ.get("OAUTH_SESSION_DATA_URL", "").strip()
@@ -390,8 +428,24 @@ def milestone_to_response(milestone: Milestone) -> dict:
 
 
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=900,
+        path="/",
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=604800,
+        path="/",
+    )
 
 
 async def get_active_github_account(db: AsyncSession, user_id: str) -> Optional[ConnectedAccount]:
@@ -534,7 +588,15 @@ async def refresh_token(request: Request, response: Response, db: AsyncSession =
             raise HTTPException(status_code=401, detail="User not found")
         
         access_token = create_access_token(user.id, user.email)
-        response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=COOKIE_SECURE,
+            samesite=COOKIE_SAMESITE,
+            max_age=900,
+            path="/",
+        )
         
         return {"message": "Token refreshed"}
     except jwt.ExpiredSignatureError:
@@ -625,8 +687,8 @@ async def google_session(request: Request, response: Response, db: AsyncSession 
         key="session_token",
         value=session_token,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
         max_age=604800,
         path="/"
     )
@@ -1924,7 +1986,7 @@ app.include_router(api_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
