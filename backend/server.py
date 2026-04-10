@@ -22,6 +22,7 @@ import re
 import httpx
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
+from jwt import PyJWKClient
 
 from database import get_db, engine, Base, AsyncSessionLocal
 from models import (
@@ -72,8 +73,10 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "fallback-secret-change-me")
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 JWT_ALGORITHM = "HS256"
+SUPABASE_JWT_AUDIENCE = "authenticated"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+_supabase_jwks_client: Optional[PyJWKClient] = None
 
 
 def _build_allowed_origins() -> List[str]:
@@ -159,27 +162,56 @@ def create_refresh_token(user_id: str) -> str:
 
 
 # ========== Auth Dependencies ==========
+def get_supabase_jwks_client() -> Optional[PyJWKClient]:
+    global _supabase_jwks_client
+    if not SUPABASE_URL:
+        return None
+    if _supabase_jwks_client is None:
+        jwks_url = f"{SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        _supabase_jwks_client = PyJWKClient(jwks_url)
+    return _supabase_jwks_client
+
+
 async def verify_supabase_token(token: str) -> Optional[dict]:
-    """Verify Supabase access JWT using SUPABASE_JWT_SECRET (required; no unverified fallback)."""
-    if not SUPABASE_JWT_SECRET:
+    """Verify Supabase access JWT using JWKS (with optional HS256 fallback for legacy projects)."""
+    if not SUPABASE_URL:
         return None
+
+    expected_iss = f"{SUPABASE_URL.rstrip('/')}/auth/v1"
+
+    # Primary path: asymmetric key verification via Supabase JWKS.
     try:
-        payload = jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=[JWT_ALGORITHM],
-            audience="authenticated",
-        )
+        jwks_client = get_supabase_jwks_client()
+        if jwks_client:
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+            payload = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256", "ES256"],
+                audience=SUPABASE_JWT_AUDIENCE,
+                issuer=expected_iss,
+            )
+            return payload
     except jwt.InvalidTokenError:
-        return None
-    iss = str(payload.get("iss") or "")
-    if "supabase" not in iss.lower():
-        return None
-    if SUPABASE_URL:
-        expected_iss = f"{SUPABASE_URL.rstrip('/')}/auth/v1"
-        if payload.get("iss") != expected_iss:
+        pass
+    except Exception:
+        pass
+
+    # Backward-compatible fallback for old Supabase JWT secret projects.
+    if SUPABASE_JWT_SECRET:
+        try:
+            payload = jwt.decode(
+                token,
+                SUPABASE_JWT_SECRET,
+                algorithms=[JWT_ALGORITHM],
+                audience=SUPABASE_JWT_AUDIENCE,
+                issuer=expected_iss,
+            )
+            return payload
+        except jwt.InvalidTokenError:
             return None
-    return payload
+
+    return None
 
 
 async def require_supabase_access_jwt(request: Request) -> dict:
@@ -187,11 +219,8 @@ async def require_supabase_access_jwt(request: Request) -> dict:
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authorization Bearer token required")
-    if not SUPABASE_JWT_SECRET:
-        raise HTTPException(
-            status_code=503,
-            detail="SUPABASE_JWT_SECRET is not configured",
-        )
+    if not SUPABASE_URL:
+        raise HTTPException(status_code=503, detail="SUPABASE_URL is not configured")
     payload = await verify_supabase_token(auth_header[7:])
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired Supabase session")
