@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { getBackendOrigin } from '../lib/backendUrl';
 import { supabase } from '../lib/supabase';
 import axios from 'axios';
-
-const API_URL = process.env.REACT_APP_BACKEND_URL;
 
 const AuthContext = createContext(null);
 
@@ -15,7 +14,8 @@ export function AuthProvider({ children }) {
   const syncUserWithBackend = useCallback(async (supabaseUser, accessToken) => {
     if (!supabaseUser) return null;
 
-    if (!API_URL) {
+    const backendOrigin = getBackendOrigin();
+    if (!backendOrigin) {
       return {
         id: supabaseUser.id,
         email: supabaseUser.email,
@@ -31,7 +31,7 @@ export function AuthProvider({ children }) {
 
     try {
       // Call backend to sync/create user profile
-      const response = await axios.post(`${API_URL}/api/auth/sync`, {
+      const response = await axios.post(`${backendOrigin}/api/auth/sync`, {
         supabase_id: supabaseUser.id,
         email: supabaseUser.email,
         name: supabaseUser.user_metadata?.full_name || supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')[0],
@@ -151,8 +151,13 @@ export function AuthProvider({ children }) {
     }
 
     // If Supabase fails, try legacy backend auth
+    const legacyOrigin = getBackendOrigin();
+    if (!legacyOrigin) {
+      if (error) throw error;
+      throw new Error('Login failed');
+    }
     try {
-      const response = await axios.post(`${API_URL}/api/auth/login`, {
+      const response = await axios.post(`${legacyOrigin}/api/auth/login`, {
         email,
         password
       }, {
@@ -206,10 +211,13 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut();
     
     // Also logout from backend (for legacy sessions)
-    try {
-      await axios.post(`${API_URL}/api/auth/logout`, {}, { withCredentials: true });
-    } catch (_error) {
-      // Ignore logout errors
+    const logoutOrigin = getBackendOrigin();
+    if (logoutOrigin) {
+      try {
+        await axios.post(`${logoutOrigin}/api/auth/logout`, {}, { withCredentials: true });
+      } catch (_error) {
+        // Ignore logout errors
+      }
     }
     
     setUser(null);
