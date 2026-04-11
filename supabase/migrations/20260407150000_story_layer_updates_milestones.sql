@@ -17,14 +17,14 @@ ALTER TABLE project_updates
   ADD COLUMN IF NOT EXISTS update_type projectupdatetype,
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-UPDATE project_updates
+UPDATE project_updates pu
 SET
-  author_user_id = COALESCE(author_user_id, p.user_id),
-  title = COALESCE(title, 'Project update'),
-  body = COALESCE(body, content),
-  update_type = COALESCE(update_type, 'progress'::projectupdatetype)
+  author_user_id = COALESCE(pu.author_user_id, p.user_id),
+  title = COALESCE(pu.title, 'Project update'),
+  body = COALESCE(pu.body, pu.content),
+  update_type = COALESCE(pu.update_type, 'progress'::projectupdatetype)
 FROM projects p
-WHERE p.id = project_updates.project_id;
+WHERE p.id = pu.project_id;
 
 ALTER TABLE project_updates
   ALTER COLUMN author_user_id SET NOT NULL,
@@ -45,7 +45,7 @@ ALTER TABLE milestones
 
 UPDATE milestones m
 SET
-  created_by_user_id = COALESCE(created_by_user_id, p.user_id),
+  created_by_user_id = COALESCE(m.created_by_user_id, p.user_id),
   status = CASE WHEN m.is_completed THEN 'done'::milestonestatus ELSE COALESCE(m.status, 'planned'::milestonestatus) END,
   completed_at = CASE WHEN m.is_completed AND m.completed_at IS NULL THEN m.created_at ELSE m.completed_at END
 FROM projects p
