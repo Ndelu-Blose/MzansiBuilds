@@ -1,11 +1,19 @@
 import axios from 'axios';
+import { getBackendOrigin } from './backendUrl';
 import { supabase } from './supabase';
 
-const API_URL = process.env.REACT_APP_BACKEND_URL || '';
+const backendOrigin = getBackendOrigin();
+
+if (process.env.NODE_ENV === 'production' && !backendOrigin) {
+  // Relative /api on the SPA host (e.g. Vercel) is not the FastAPI app — often 405/404 on POST.
+  console.error(
+    '[MzansiBuilds] REACT_APP_BACKEND_URL is not set in this production build. API calls use same-origin /api, which usually fails for POST routes. Set REACT_APP_BACKEND_URL to your Railway (or other) API origin, e.g. https://your-service.up.railway.app'
+  );
+}
 
 // Create axios instance with interceptor for auth
 const api = axios.create({
-  baseURL: API_URL ? `${API_URL}/api` : '/api',
+  baseURL: backendOrigin ? `${backendOrigin}/api` : '/api',
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
@@ -26,6 +34,29 @@ api.interceptors.request.use(async (config) => {
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 405) {
+      const cfg = error.config || {};
+      const base = (cfg.baseURL || '').replace(/\/$/, '');
+      const path = String(cfg.url || '').replace(/^\//, '');
+      const resolved = base && path ? `${base}/${path}` : base || path || '(unknown)';
+      const hdrs = error.response.headers || {};
+      const server = hdrs.server || hdrs.Server;
+      const via = hdrs.via || hdrs.Via;
+      console.error(
+        '[MzansiBuilds API] 405 Method Not Allowed —',
+        resolved,
+        `(${String(cfg.method || 'GET').toUpperCase()}).`,
+        'FastAPI defines these routes as POST; 405 here usually means the request did not reach that app (wrong host, static CDN, or proxy).',
+        [server && `server=${server}`, via && `via=${via}`].filter(Boolean).join(' ') || '(no Server/Via headers)'
+      );
+    }
+    return Promise.reject(error);
+  }
+);
 
 // Projects API
 export const projectsAPI = {
