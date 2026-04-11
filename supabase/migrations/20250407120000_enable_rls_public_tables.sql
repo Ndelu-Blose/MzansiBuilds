@@ -6,41 +6,37 @@
 --
 -- If you later use supabase-js to query public tables, add policies (e.g. match auth.uid() to
 -- users.google_id where that column stores Supabase Auth sub).
+--
+-- Tables may be created outside Supabase migrations (e.g. SQLAlchemy on Railway). Only touch
+-- relations that exist so preview DBs and partial schemas do not fail.
 
-ALTER TABLE public.login_attempts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.user_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.project_updates ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.milestones ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.comments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.collaboration_requests ENABLE ROW LEVEL SECURITY;
-
--- Explicit deny for PostgREST roles (clearer than relying on "no policy" defaults).
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.login_attempts;
-CREATE POLICY "deny_direct_api_access" ON public.login_attempts FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.users;
-CREATE POLICY "deny_direct_api_access" ON public.users FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.user_sessions;
-CREATE POLICY "deny_direct_api_access" ON public.user_sessions FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.profiles;
-CREATE POLICY "deny_direct_api_access" ON public.profiles FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.projects;
-CREATE POLICY "deny_direct_api_access" ON public.projects FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.project_updates;
-CREATE POLICY "deny_direct_api_access" ON public.project_updates FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.milestones;
-CREATE POLICY "deny_direct_api_access" ON public.milestones FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.comments;
-CREATE POLICY "deny_direct_api_access" ON public.comments FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
-
-DROP POLICY IF EXISTS "deny_direct_api_access" ON public.collaboration_requests;
-CREATE POLICY "deny_direct_api_access" ON public.collaboration_requests FOR ALL TO anon, authenticated USING (false) WITH CHECK (false);
+DO $$
+DECLARE
+  t text;
+  tables text[] := ARRAY[
+    'login_attempts',
+    'users',
+    'user_sessions',
+    'profiles',
+    'projects',
+    'project_updates',
+    'milestones',
+    'comments',
+    'collaboration_requests'
+  ];
+BEGIN
+  FOREACH t IN ARRAY tables
+  LOOP
+    IF to_regclass(format('public.%I', t)) IS NOT NULL THEN
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+      EXECUTE format(
+        'DROP POLICY IF EXISTS deny_direct_api_access ON public.%I',
+        t
+      );
+      EXECUTE format(
+        'CREATE POLICY deny_direct_api_access ON public.%I FOR ALL TO anon, authenticated USING (false) WITH CHECK (false)',
+        t
+      );
+    END IF;
+  END LOOP;
+END $$;
