@@ -1,6 +1,6 @@
 # Pydantic Schemas for MzansiBuilds
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
-from typing import Optional, List
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from enum import Enum
 
@@ -165,6 +165,7 @@ class ProjectResponse(BaseModel):
     repo_connected: Optional[bool] = False
     created_at: datetime
     updated_at: datetime
+    import_provenance: Optional[Dict[str, Any]] = None
 
 
 class GitHubConnectStartResponse(BaseModel):
@@ -191,9 +192,22 @@ class GitHubRepoSummary(BaseModel):
     updated_at: Optional[str] = None
     pushed_at: Optional[str] = None
     language: Optional[str] = None
+    topics: List[str] = Field(default_factory=list)
+    stargazers_count: int = 0
+    forks_count: int = 0
+    owner_avatar_url: Optional[str] = None
+    homepage: Optional[str] = None
     owner_match: Optional[bool] = False
     contributor_match: Optional[bool] = False
     visibility: Optional[str] = None
+
+
+class GitHubRepoLanguagesResponse(BaseModel):
+    languages: Dict[str, int]
+
+
+class GitHubRepoReadmeSummaryResponse(BaseModel):
+    text: Optional[str] = None
 
 
 class GitHubRepoListResponse(BaseModel):

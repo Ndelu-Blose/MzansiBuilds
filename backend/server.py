@@ -46,14 +46,24 @@ from schemas import (
     FeedItem, FeedResponse, AuthResponse, TokenResponse,
     ForgotPasswordRequest, ResetPasswordRequest,
     ProjectStageEnum, CollaborationStatusEnum, GitHubConnectStartResponse,
-    GitHubAccountResponse, GitHubRepoListResponse, ImportGitHubProjectRequest,
+    GitHubAccountResponse,
+    GitHubRepoListResponse,
+    GitHubRepoLanguagesResponse,
+    GitHubRepoReadmeSummaryResponse,
+    ImportGitHubProjectRequest,
     CreateManualProjectRequest
 )
 from github_oauth_service import (
     build_authorization_url, exchange_code_for_token, fetch_authenticated_profile,
     encrypt_token, decrypt_token,
 )
-from github_api_service import list_user_repos, get_repo_by_id, get_repo_contributors
+from github_api_service import (
+    list_user_repos,
+    get_repo_by_id,
+    get_repo_contributors,
+    get_repo_languages,
+    get_readme_preview,
+)
 from project_import_service import create_imported_project
 from project_sync_service import run_repo_sync
 from project_activity_service import merge_project_activity
@@ -413,9 +423,17 @@ def project_to_response(project: Project, include_user: bool = False) -> dict:
         "ownership_type": project.ownership_type.value if project.ownership_type else "none",
         "repo_connected": bool(project.repo_connected),
         "created_at": project.created_at.isoformat() if project.created_at else None,
-        "updated_at": project.updated_at.isoformat() if project.updated_at else None
+        "updated_at": project.updated_at.isoformat() if project.updated_at else None,
     }
-    
+    prov = getattr(project, "import_provenance_json", None)
+    if prov:
+        try:
+            response["import_provenance"] = json.loads(prov)
+        except (TypeError, json.JSONDecodeError):
+            response["import_provenance"] = None
+    else:
+        response["import_provenance"] = None
+
     if include_user and project.user:
         response["user"] = user_to_response(project.user)
     
@@ -1005,25 +1023,83 @@ async def github_repos(page: int = 1, per_page: int = 30, search: Optional[str] 
             or search_lower in (r.get("language") or "").lower()
         ]
     total = len(repos)
-    items = [
-        {
-            "github_repo_id": r["id"],
-            "name": r["name"],
-            "full_name": r["full_name"],
-            "owner_login": (r.get("owner") or {}).get("login"),
-            "owner_id": (r.get("owner") or {}).get("id"),
-            "private": r.get("private") or False,
-            "description": r.get("description"),
-            "updated_at": r.get("updated_at"),
-            "pushed_at": r.get("pushed_at"),
-            "language": r.get("language"),
-            "owner_match": (r.get("owner") or {}).get("id") == account.provider_account_id,
-            "contributor_match": not ((r.get("owner") or {}).get("id") == account.provider_account_id),
-            "visibility": "private" if r.get("private") else "public",
-        }
-        for r in repos
-    ]
+    items = []
+    for r in repos:
+        raw_topics = r.get("topics") if isinstance(r.get("topics"), list) else []
+        topics = [str(t) for t in raw_topics[:10] if t]
+        owner = r.get("owner") or {}
+        items.append(
+            {
+                "github_repo_id": r["id"],
+                "name": r["name"],
+                "full_name": r["full_name"],
+                "owner_login": owner.get("login"),
+                "owner_id": owner.get("id"),
+                "private": r.get("private") or False,
+                "description": r.get("description"),
+                "updated_at": r.get("updated_at"),
+                "pushed_at": r.get("pushed_at"),
+                "language": r.get("language"),
+                "topics": topics,
+                "stargazers_count": int(r.get("stargazers_count") or 0),
+                "forks_count": int(r.get("forks_count") or 0),
+                "owner_avatar_url": owner.get("avatar_url"),
+                "homepage": r.get("homepage"),
+                "owner_match": owner.get("id") == account.provider_account_id,
+                "contributor_match": not (owner.get("id") == account.provider_account_id),
+                "visibility": "private" if r.get("private") else "public",
+            }
+        )
     return {"items": items, "total": total, "page": page, "per_page": per_page}
+
+
+@api_router.get("/integrations/github/repos/{repo_id}/languages", response_model=GitHubRepoLanguagesResponse)
+async def github_repo_languages(
+    repo_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account = await get_active_github_account(db, user.id)
+    if not account:
+        raise HTTPException(status_code=400, detail="Connect GitHub first")
+    token = decrypt_connected_account_token_or_400(account)
+    try:
+        repo_data = await get_repo_by_id(token, repo_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response is not None and exc.response.status_code in (403, 404):
+            raise HTTPException(status_code=403, detail="Repository not accessible")
+        raise
+    owner_login = repo_data["owner"]["login"]
+    name = repo_data["name"]
+    langs = await get_repo_languages(token, owner_login, name)
+    return {"languages": langs or {}}
+
+
+@api_router.get("/integrations/github/repos/{repo_id}/readme-summary", response_model=GitHubRepoReadmeSummaryResponse)
+async def github_repo_readme_summary(
+    repo_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account = await get_active_github_account(db, user.id)
+    if not account:
+        raise HTTPException(status_code=400, detail="Connect GitHub first")
+    token = decrypt_connected_account_token_or_400(account)
+    try:
+        repo_data = await get_repo_by_id(token, repo_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response is not None and exc.response.status_code in (403, 404):
+            raise HTTPException(status_code=403, detail="Repository not accessible")
+        raise
+    owner_login = repo_data["owner"]["login"]
+    name = repo_data["name"]
+    raw = await get_readme_preview(token, owner_login, name)
+    if not raw:
+        return {"text": None}
+    text = raw.strip().replace("\r\n", "\n")
+    if len(text) > 4000:
+        text = text[:4000] + "…"
+    return {"text": text}
 
 
 # ========== PROFILE ENDPOINTS ==========
@@ -1166,6 +1242,18 @@ async def import_project_from_github(
         repo_data=repo_data,
         contributor_ids=contributor_ids,
         connected_account_id=account.provider_account_id,
+    )
+    project.import_provenance_json = json.dumps(
+        {
+            "source": "github",
+            "github_repo_full_name": repo_data.get("full_name"),
+            "github_repo_id": repo_data.get("id"),
+            "imported_at": datetime.now(timezone.utc).isoformat(),
+            "submitted_title": data.title,
+            "submitted_tags": data.tags or [],
+            "submitted_stage": data.stage.value if data.stage else None,
+            "submitted_demo_url": data.demo_url,
+        }
     )
     db.add(project)
     await db.flush()

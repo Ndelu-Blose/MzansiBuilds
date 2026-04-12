@@ -430,6 +430,15 @@ export default function ProjectDetailPage() {
               <h1 className="text-3xl font-bold text-foreground tracking-tight mb-3">
                 {project.title}
               </h1>
+              {project.import_provenance?.source === 'github' && project.import_provenance.github_repo_full_name && (
+                <p className="text-xs text-muted-foreground mb-3" data-testid="import-provenance-note">
+                  Imported from GitHub ({project.import_provenance.github_repo_full_name}
+                  {project.import_provenance.imported_at
+                    ? ` · ${new Date(project.import_provenance.imported_at).toLocaleString()}`
+                    : ''}
+                  )
+                </p>
+              )}
               {project.description && (
                 <p className="text-muted-foreground mb-4 max-w-2xl">{project.description}</p>
               )}

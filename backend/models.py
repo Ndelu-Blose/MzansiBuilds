@@ -155,6 +155,7 @@ class Project(Base):
     demo_url = Column(String(500), nullable=True)
     problem_statement = Column(Text, nullable=True)
     roadmap_summary = Column(Text, nullable=True)
+    import_provenance_json = Column(Text, nullable=True)
     project_type = Column(SQLEnum(ProjectType), default=ProjectType.idea, nullable=False)
     verification_status = Column(SQLEnum(VerificationStatus), default=VerificationStatus.unverified, nullable=False)
     ownership_type = Column(SQLEnum(OwnershipType), default=OwnershipType.none, nullable=False)
