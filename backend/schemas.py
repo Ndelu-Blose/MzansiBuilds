@@ -253,6 +253,12 @@ class ProjectUpdateCreate(ProjectUpdateBase):
     pass
 
 
+class ProjectUpdatePatch(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    body: Optional[str] = Field(None, min_length=1)
+    update_type: Optional[ProjectUpdateTypeEnum] = None
+
+
 class ProjectUpdateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
@@ -264,6 +270,7 @@ class ProjectUpdateResponse(BaseModel):
     update_type: ProjectUpdateTypeEnum
     created_at: datetime
     updated_at: datetime
+    author: Optional[UserResponse] = None
 
 
 class ProjectUpdateWithProject(ProjectUpdateResponse):
@@ -325,6 +332,26 @@ class CommentResponse(BaseModel):
 
 class CommentWithUser(CommentResponse):
     user: Optional[UserResponse] = None
+
+
+# ========== In-app notifications ==========
+class NotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    type: str
+    title: str
+    body: str
+    project_id: Optional[str] = None
+    read_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class NotificationListResponse(BaseModel):
+    items: List[NotificationResponse]
+    unread_count: int
+    limit: int
+    offset: int
 
 
 # ========== Collaboration Request Schemas ==========

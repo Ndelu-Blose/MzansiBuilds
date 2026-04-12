@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { Rss, Trophy, FolderKanban, LogOut, Menu, X, Code } from 'lucide-react';
+import { Rss, Trophy, FolderKanban, LogOut, Menu, X, Code, Bell } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { notificationsAPI } from '../lib/api';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
 const desktopNavLink = ({ isActive }) =>
@@ -29,10 +31,61 @@ export default function SiteHeader({ variant = 'app' }) {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifItems, setNotifItems] = useState([]);
+  const [notifUnread, setNotifUnread] = useState(0);
+  const [notifLoading, setNotifLoading] = useState(false);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const { data } = await notificationsAPI.list({ limit: 15, offset: 0 });
+      setNotifItems(data.items || []);
+      setNotifUnread(typeof data.unread_count === 'number' ? data.unread_count : 0);
+    } catch (_e) {
+      /* ignore when offline or unauthenticated */
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     setAvatarLoadFailed(false);
   }, [user?.picture]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setNotifItems([]);
+      setNotifUnread(0);
+      return undefined;
+    }
+    refreshNotifications();
+    const t = setInterval(refreshNotifications, 45000);
+    return () => clearInterval(t);
+  }, [isAuthenticated, refreshNotifications]);
+
+  useEffect(() => {
+    if (notifOpen) {
+      setNotifLoading(true);
+      refreshNotifications().finally(() => setNotifLoading(false));
+    }
+  }, [notifOpen, refreshNotifications]);
+
+  const handleNotificationClick = async (n) => {
+    if (!n.read_at) {
+      try {
+        await notificationsAPI.markRead(n.id);
+        setNotifItems((prev) =>
+          prev.map((x) => (x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x))
+        );
+        setNotifUnread((c) => Math.max(0, c - 1));
+      } catch (_e) {
+        /* ignore */
+      }
+    }
+    if (n.project_id) {
+      setNotifOpen(false);
+      navigate(`/projects/${n.project_id}`);
+    }
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -71,7 +124,56 @@ export default function SiteHeader({ variant = 'app' }) {
             )}
           </nav>
 
-          <div className="hidden md:flex items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0">
+            {isAuthenticated && variant === 'app' && (
+              <Popover open={notifOpen} onOpenChange={setNotifOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="relative text-muted-foreground hover:text-foreground p-2 rounded-md hover:bg-muted transition-colors"
+                    data-testid="notifications-bell"
+                    aria-label="Notifications"
+                  >
+                    <Bell className="w-5 h-5" />
+                    {notifUnread > 0 && (
+                      <span
+                        className="absolute -top-0.5 -right-0.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold flex items-center justify-center"
+                        data-testid="notifications-badge"
+                      >
+                        {notifUnread > 9 ? '9+' : notifUnread}
+                      </span>
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-80 p-0">
+                  <div className="px-3 py-2 border-b border-border font-medium text-sm text-foreground">Notifications</div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifLoading ? (
+                      <p className="p-3 text-sm text-muted-foreground">Loading…</p>
+                    ) : notifItems.length === 0 ? (
+                      <p className="p-3 text-sm text-muted-foreground">No notifications yet.</p>
+                    ) : (
+                      notifItems.map((n) => (
+                        <button
+                          key={n.id}
+                          type="button"
+                          className={cn(
+                            'w-full text-left px-3 py-2.5 border-b border-border last:border-0 hover:bg-muted/80 transition-colors text-sm',
+                            !n.read_at && 'bg-primary/5'
+                          )}
+                          data-testid="notification-row"
+                          onClick={() => handleNotificationClick(n)}
+                        >
+                          <p className="font-medium text-foreground line-clamp-2">{n.title}</p>
+                          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{n.body}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
+            <div className="hidden md:flex items-center gap-3">
             {isAuthenticated && variant === 'marketing' ? (
               <Button asChild>
                 <Link to="/dashboard" data-testid="dashboard-btn">
@@ -133,6 +235,7 @@ export default function SiteHeader({ variant = 'app' }) {
                 </Link>
               </Button>
             )}
+            </div>
           </div>
 
           <button

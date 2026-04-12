@@ -82,7 +82,9 @@ export const githubAPI = {
 // Project Updates API
 export const updatesAPI = {
   list: (projectId, params = {}) => api.get(`/projects/${projectId}/updates`, { params }),
-  create: (projectId, data) => api.post(`/projects/${projectId}/updates`, data)
+  create: (projectId, data) => api.post(`/projects/${projectId}/updates`, data),
+  update: (projectId, updateId, data) => api.patch(`/projects/${projectId}/updates/${updateId}`, data),
+  delete: (projectId, updateId) => api.delete(`/projects/${projectId}/updates/${updateId}`),
 };
 
 // Milestones API
@@ -99,7 +101,14 @@ export const activityAPI = {
 // Comments API
 export const commentsAPI = {
   list: (projectId, params = {}) => api.get(`/projects/${projectId}/comments`, { params }),
-  create: (projectId, data) => api.post(`/projects/${projectId}/comments`, data)
+  create: (projectId, data) => api.post(`/projects/${projectId}/comments`, data),
+  delete: (projectId, commentId) => api.delete(`/projects/${projectId}/comments/${commentId}`),
+};
+
+// Notifications API
+export const notificationsAPI = {
+  list: (params = {}) => api.get('/notifications', { params }),
+  markRead: (notificationId) => api.patch(`/notifications/${notificationId}/read`),
 };
 
 // Collaboration API

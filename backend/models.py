@@ -99,6 +99,7 @@ class User(Base):
     profile = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     projects = relationship("Project", back_populates="user", cascade="all, delete-orphan")
     comments = relationship("Comment", back_populates="user", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     collaboration_requests = relationship("CollaborationRequest", back_populates="requester", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     connected_accounts = relationship("ConnectedAccount", back_populates="user", cascade="all, delete-orphan")
@@ -186,10 +187,29 @@ class ProjectUpdate(Base):
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     project = relationship("Project", back_populates="updates")
-    
+    author = relationship("User", foreign_keys=[author_user_id])
+
     __table_args__ = (
         Index('idx_project_updates_created_at_desc', created_at.desc()),
     )
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    type = Column(String(64), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=False)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+    user = relationship("User", back_populates="notifications")
+    project = relationship("Project", foreign_keys=[project_id])
+
+    __table_args__ = (Index("idx_notifications_user_created", "user_id", "created_at"),)
 
 
 class Milestone(Base):

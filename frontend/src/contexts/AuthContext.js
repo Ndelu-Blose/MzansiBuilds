@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { getBackendOrigin } from '../lib/backendUrl';
 import { supabase } from '../lib/supabase';
 import axios from 'axios';
@@ -9,6 +9,8 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  /** Supabase `onAuthStateChange` emits `session: null` on failed password sign-in; do not wipe a legacy session. */
+  const legacyAuthActiveRef = useRef(false);
 
   // Sync profile with backend when user authenticates via Supabase
   const syncUserWithBackend = useCallback(async (supabaseUser, accessToken) => {
@@ -60,21 +62,28 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
       if (session?.user) {
+        legacyAuthActiveRef.current = false;
+        setSession(session);
         const backendUser = await syncUserWithBackend(session.user, session.access_token);
         setUser(backendUser);
+      } else if (!legacyAuthActiveRef.current) {
+        setSession(null);
       }
       setLoading(false);
     });
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setSession(session);
       if (session?.user) {
+        legacyAuthActiveRef.current = false;
+        setSession(session);
         const backendUser = await syncUserWithBackend(session.user, session.access_token);
         setUser(backendUser);
+      } else if (legacyAuthActiveRef.current) {
+        // Keep client-side legacy session; Supabase has no session for this tab.
       } else {
+        setSession(null);
         setUser(null);
       }
       setLoading(false);
@@ -147,6 +156,7 @@ export function AuthProvider({ children }) {
     }
 
     if (!error && data?.session) {
+      legacyAuthActiveRef.current = false;
       return data;
     }
 
@@ -157,6 +167,7 @@ export function AuthProvider({ children }) {
       throw new Error('Login failed');
     }
     try {
+      legacyAuthActiveRef.current = true;
       const response = await axios.post(`${legacyOrigin}/api/auth/login`, {
         email,
         password
@@ -171,6 +182,7 @@ export function AuthProvider({ children }) {
       
       return { session: { user: legacyUser, legacy: true }, user: legacyUser };
     } catch (legacyError) {
+      legacyAuthActiveRef.current = false;
       // If both fail, throw the original Supabase error or a combined error
       if (error) {
         throw error;
@@ -207,6 +219,7 @@ export function AuthProvider({ children }) {
 
   // Sign Out
   const logout = async () => {
+    legacyAuthActiveRef.current = false;
     // Logout from Supabase
     await supabase.auth.signOut();
     

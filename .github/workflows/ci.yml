@@ -16,6 +16,8 @@ jobs:
     env:
       REACT_APP_SUPABASE_URL: https://ci-placeholder.supabase.co
       REACT_APP_SUPABASE_ANON_KEY: ci-placeholder-anon-key-for-build-only
+      # Playwright e2e mocks intercept http://localhost:8001/**; legacy login requires this at build time.
+      REACT_APP_BACKEND_URL: http://localhost:8001
     steps:
       - uses: actions/checkout@v4
 
