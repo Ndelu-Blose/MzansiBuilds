@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { githubAPI, projectsAPI } from '../lib/api';
 import { X, Loader2, Github, Search, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { TechStackPicker } from '@/components/TechStackPicker';
 
 const stages = [
   { value: 'idea', label: 'Idea' },
@@ -13,11 +14,32 @@ const stages = [
 const fieldClass =
   'w-full rounded-md border border-input bg-background px-4 py-2.5 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-all';
 
+/** POST /api/integrations/github/connect/start — avoid blaming OAuth when the request never hits FastAPI. */
+function githubConnectStartErrorMessage(err) {
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail;
+  }
+  const status = err?.response?.status;
+  if (status === 405) {
+    return (
+      'Could not reach your API (HTTP 405). The browser may be posting to the frontend host instead of Railway. ' +
+      'Set REACT_APP_BACKEND_URL in Vercel to your FastAPI origin (https://…railway.app, no /api suffix), then redeploy.'
+    );
+  }
+  if (!err?.response) {
+    return (
+      'Could not reach the backend. Set REACT_APP_BACKEND_URL to your Railway API URL (build-time on Vercel), redeploy, and try again.'
+    );
+  }
+  return 'Unable to start GitHub connection. If REACT_APP_BACKEND_URL is correct, check backend GitHub OAuth (GITHUB_CLIENT_ID and GITHUB_REDIRECT_URI).';
+}
+
 export default function CreateProjectModal({ onClose, onCreated }) {
   const [mode, setMode] = useState('github');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [techStack, setTechStack] = useState('');
+  const [techStackTags, setTechStackTags] = useState([]);
   const [stage, setStage] = useState('idea');
   const [supportNeeded, setSupportNeeded] = useState('');
   const [loading, setLoading] = useState(false);
@@ -77,7 +99,7 @@ export default function CreateProjectModal({ onClose, onCreated }) {
       const response = await githubAPI.connectStart();
       window.location.href = response.data.authorization_url;
     } catch (err) {
-      setRepoError(err?.response?.data?.detail || 'Unable to start GitHub connection. Check backend GitHub OAuth env settings.');
+      setRepoError(githubConnectStartErrorMessage(err));
     }
   };
 
@@ -92,11 +114,6 @@ export default function CreateProjectModal({ onClose, onCreated }) {
     setError('');
 
     try {
-      const techStackArray = techStack
-        .split(',')
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0);
-
       let response;
       if (mode === 'github') {
         if (!selectedRepoId) {
@@ -117,7 +134,7 @@ export default function CreateProjectModal({ onClose, onCreated }) {
           stage,
           short_pitch: supportNeeded.trim() || null,
           long_description: description.trim() || null,
-          tags: techStackArray.length > 0 ? techStackArray : [],
+          tags: techStackTags.length > 0 ? techStackTags : [],
           looking_for_help: false,
         });
       }
@@ -290,14 +307,14 @@ export default function CreateProjectModal({ onClose, onCreated }) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-foreground mb-1.5">Tech Stack</label>
-            <input
-              type="text"
-              value={techStack}
-              onChange={(e) => setTechStack(e.target.value)}
-              placeholder="React, Node.js, PostgreSQL (comma separated)"
-              className={fieldClass}
-              data-testid="project-techstack-input"
+            <label className="block text-sm font-medium text-foreground mb-1.5" htmlFor="project-tech-stack">
+              Tech Stack
+            </label>
+            <TechStackPicker
+              id="project-tech-stack"
+              value={techStackTags}
+              onChange={setTechStackTags}
+              triggerTestId="project-techstack-input"
             />
           </div>
 
