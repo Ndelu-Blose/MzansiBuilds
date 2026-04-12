@@ -70,16 +70,18 @@ from project_activity_service import merge_project_activity
 from notification_service import (
     add_notification,
     NOTIFICATION_TYPE_COLLABORATION_REQUEST,
+    NOTIFICATION_TYPE_COLLABORATION_DECISION,
     NOTIFICATION_TYPE_PROJECT_COMMENT,
     NOTIFICATION_TYPE_MILESTONE_COMPLETED,
     NOTIFICATION_TYPE_PROJECT_UPDATE_POSTED,
 )
 from oauth_state_service import create_oauth_state, consume_oauth_state, cleanup_expired_states
 from email_service import (
-    send_welcome_email, 
+    send_welcome_email,
     send_collaboration_request_email,
+    send_collaboration_decision_email,
     send_comment_notification_email,
-    send_project_completed_email
+    send_project_completed_email,
 )
 
 # Configure logging
@@ -1924,7 +1926,8 @@ async def create_comment(project_id: str, data: CommentCreate, background_tasks:
             owner_name=project.user.name or project.user.email.split("@")[0],
             project_title=project.title,
             commenter_name=user.name or user.email.split("@")[0],
-            comment_preview=data.content
+            comment_preview=data.content,
+            project_id=project_id,
         )
     
     return {
@@ -2048,7 +2051,8 @@ async def request_collaboration(project_id: str, data: CollaborationRequestCreat
             owner_name=project.user.name or project.user.email.split("@")[0],
             project_title=project.title,
             requester_name=user.name or user.email.split("@")[0],
-            message=data.message
+            message=data.message,
+            project_id=project_id,
         )
     
     return {
@@ -2093,32 +2097,77 @@ async def get_collaborators(project_id: str, db: AsyncSession = Depends(get_db))
 
 
 @api_router.patch("/collaborations/{collab_id}")
-async def update_collaboration(collab_id: str, data: CollaborationRequestUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def update_collaboration(
+    collab_id: str,
+    data: CollaborationRequestUpdate,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
         select(CollaborationRequest)
-        .options(selectinload(CollaborationRequest.project))
+        .options(
+            selectinload(CollaborationRequest.project),
+            selectinload(CollaborationRequest.requester),
+        )
         .where(CollaborationRequest.id == collab_id)
     )
     collab = result.scalar_one_or_none()
-    
+
     if not collab:
         raise HTTPException(status_code=404, detail="Collaboration request not found")
-    
+
     # Only project owner can accept/reject
     if collab.project.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
-    collab.status = CollaborationStatus(data.status.value)
+
+    prev_status = collab.status
+    new_status = CollaborationStatus(data.status.value)
+    collab.status = new_status
+
+    if collab.requester_user_id and prev_status == CollaborationStatus.pending and new_status in (
+        CollaborationStatus.accepted,
+        CollaborationStatus.rejected,
+    ):
+        owner_name = user.name or user.email.split("@")[0]
+        project_title = collab.project.title if collab.project else "a project"
+        decision_word = "accepted" if new_status == CollaborationStatus.accepted else "declined"
+        add_notification(
+            db,
+            user_id=collab.requester_user_id,
+            notif_type=NOTIFICATION_TYPE_COLLABORATION_DECISION,
+            title=f"Collaboration {decision_word}: {project_title}",
+            body=f"{owner_name} {decision_word} your request on \"{project_title}\".",
+            project_id=collab.project_id,
+        )
+
     await db.commit()
     await db.refresh(collab)
-    
+
+    if collab.requester and collab.requester.email and prev_status == CollaborationStatus.pending and new_status in (
+        CollaborationStatus.accepted,
+        CollaborationStatus.rejected,
+    ):
+        owner_name = user.name or user.email.split("@")[0]
+        project_title = collab.project.title if collab.project else "a project"
+        decision = new_status.value
+        background_tasks.add_task(
+            send_collaboration_decision_email,
+            to=collab.requester.email,
+            requester_name=collab.requester.name or collab.requester.email.split("@")[0],
+            project_title=project_title,
+            owner_name=owner_name,
+            decision=decision,
+            project_id=collab.project_id,
+        )
+
     return {
         "id": collab.id,
         "project_id": collab.project_id,
         "requester_user_id": collab.requester_user_id,
         "message": collab.message,
         "status": collab.status.value,
-        "created_at": collab.created_at.isoformat() if collab.created_at else None
+        "created_at": collab.created_at.isoformat() if collab.created_at else None,
     }
 
 

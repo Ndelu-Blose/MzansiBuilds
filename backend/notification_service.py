@@ -7,6 +7,7 @@ from typing import Optional
 from models import Notification
 
 NOTIFICATION_TYPE_COLLABORATION_REQUEST = "collaboration_request"
+NOTIFICATION_TYPE_COLLABORATION_DECISION = "collaboration_decision"
 NOTIFICATION_TYPE_PROJECT_COMMENT = "project_comment"
 NOTIFICATION_TYPE_MILESTONE_COMPLETED = "milestone_completed"
 NOTIFICATION_TYPE_PROJECT_UPDATE_POSTED = "project_update_posted"

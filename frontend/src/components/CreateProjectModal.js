@@ -510,15 +510,15 @@ export default function CreateProjectModal({ onClose, onCreated }) {
   const descCharCount = description.trim().length;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 md:p-6 lg:px-10 lg:py-8">
       <div className="absolute inset-0 bg-foreground/20 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
 
       <div
-        className="relative bg-card border border-border rounded-xl shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto transition-shadow duration-200"
+        className="relative bg-card border border-border rounded-xl shadow-lg w-full min-w-0 max-w-7xl max-h-[min(94vh,1280px)] overflow-y-auto transition-shadow duration-200"
         data-testid="create-project-modal"
       >
-        <div className="flex items-center justify-between p-6 border-b border-border">
-          <h2 className="text-xl font-semibold text-foreground">Create Project</h2>
+        <div className="flex items-center justify-between px-5 py-5 sm:px-8 sm:py-6 border-b border-border">
+          <h2 className="text-xl sm:text-2xl font-semibold text-foreground tracking-tight">Create Project</h2>
           <button
             type="button"
             onClick={onClose}
@@ -530,8 +530,8 @@ export default function CreateProjectModal({ onClose, onCreated }) {
           </button>
         </div>
 
-        <form onSubmit={handleFormSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-2">
+        <form onSubmit={handleFormSubmit} className="px-5 py-5 sm:px-8 sm:py-8 space-y-4 sm:space-y-5">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
             <Button type="button" onClick={() => setMode('github')} variant={mode === 'github' ? 'default' : 'outline'}>
               <Github className="w-4 h-4" />
               Import from GitHub
@@ -565,7 +565,7 @@ export default function CreateProjectModal({ onClose, onCreated }) {
           )}
 
           {showGithubPicker && (
-            <div className="space-y-3 rounded-md border border-border p-3">
+            <div className="space-y-3 rounded-md border border-border p-3 sm:p-4">
               {!githubAccount?.connected ? (
                 <>
                   <Button type="button" onClick={startGithubConnect} variant="secondary" className="w-full">
@@ -606,7 +606,7 @@ export default function CreateProjectModal({ onClose, onCreated }) {
                   ) : repos.length === 0 ? (
                     <p className="text-sm text-muted-foreground py-2">No repositories found.</p>
                   ) : (
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                    <div className="space-y-2 max-h-64 sm:max-h-80 md:max-h-96 overflow-y-auto">
                       {repos.map((repo) => {
                         const selected = String(repo.github_repo_id) === selectedRepoId;
                         return (
@@ -686,7 +686,7 @@ export default function CreateProjectModal({ onClose, onCreated }) {
 
           {showGithubPicker && selectedRepoPreview && githubAccount?.connected && (
             <div
-              className="rounded-lg border border-border bg-muted/20 p-3 space-y-2 transition-all duration-200"
+              className="rounded-lg border border-border bg-muted/20 p-4 sm:p-5 space-y-2 sm:space-y-3 transition-all duration-200"
               data-testid="github-repo-preview"
             >
               <div className="flex items-center justify-between gap-2">
@@ -797,13 +797,16 @@ export default function CreateProjectModal({ onClose, onCreated }) {
 
           {mode === 'github' && importStep === 'review' && selectedRepoPreview && (
             <div
-              className="rounded-lg border border-border bg-muted/15 p-4 space-y-3 text-sm"
+              className="rounded-lg border border-border bg-muted/15 p-4 sm:p-6 space-y-4 text-sm"
               data-testid="github-import-review"
             >
-              <p className="font-medium text-foreground">Review import</p>
-              <p className="text-xs text-muted-foreground">
-                These values will be sent to <span className="font-mono">POST /projects/import/github</span>. Defaults apply where noted.
-              </p>
+              <div>
+                <p className="font-medium text-foreground text-base sm:text-lg">Review import</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-1 leading-relaxed">
+                  These values will be sent to <span className="font-mono text-foreground/90">POST /projects/import/github</span>.
+                  Defaults apply where noted.
+                </p>
+              </div>
               {importReviewWarnings.length > 0 ? (
                 <div
                   className="rounded-md border border-border bg-muted/20 px-3 py-2.5 text-xs text-foreground space-y-2"
@@ -835,20 +838,22 @@ export default function CreateProjectModal({ onClose, onCreated }) {
                   </ul>
                 </div>
               ) : null}
-              <dl className="space-y-2 text-sm">
-                <div>
-                  <dt className="text-muted-foreground text-xs uppercase tracking-wide">Repository</dt>
-                  <dd className="font-medium text-foreground">{selectedRepoPreview.full_name}</dd>
+              <dl className="rounded-lg border border-border/80 bg-background/60 text-sm overflow-hidden divide-y divide-border/60">
+                <div className="grid gap-1.5 px-4 py-3 sm:grid-cols-[minmax(11rem,13rem)_minmax(0,1fr)] sm:gap-x-8 sm:items-start sm:px-5 sm:py-3.5">
+                  <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide pt-0.5">Repository</dt>
+                  <dd className="font-medium text-foreground min-w-0 break-all sm:break-words m-0">
+                    {selectedRepoPreview.full_name}
+                  </dd>
                 </div>
-                <div>
-                  <dt className="text-muted-foreground text-xs uppercase tracking-wide">Title</dt>
-                  <dd>{formatReviewValue(title.trim() || null, '— (repo name)')}</dd>
+                <div className="grid gap-1.5 px-4 py-3 sm:grid-cols-[minmax(11rem,13rem)_minmax(0,1fr)] sm:gap-x-8 sm:items-start sm:px-5 sm:py-3.5">
+                  <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide pt-0.5">Title</dt>
+                  <dd className="min-w-0 break-words m-0">{formatReviewValue(title.trim() || null, '— (repo name)')}</dd>
                 </div>
-                <div>
-                  <dt className="text-muted-foreground text-xs uppercase tracking-wide">Description</dt>
-                  <dd className="space-y-1 m-0">
+                <div className="grid gap-1.5 px-4 py-3 sm:grid-cols-[minmax(11rem,13rem)_minmax(0,1fr)] sm:gap-x-8 sm:items-start sm:px-5 sm:py-3.5">
+                  <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide pt-0.5">Description</dt>
+                  <dd className="space-y-1.5 m-0 min-w-0">
                     <p
-                      className="text-[11px] text-muted-foreground font-normal normal-case"
+                      className="text-[11px] sm:text-xs text-muted-foreground font-normal normal-case"
                       data-testid="github-import-review-desc-count"
                     >
                       {descCharCount} character{descCharCount === 1 ? '' : 's'}
@@ -856,26 +861,30 @@ export default function CreateProjectModal({ onClose, onCreated }) {
                         ? ` · recommended ${IMPORT_REVIEW_DESCRIPTION_MIN_CHARS}+`
                         : ' · looks good'}
                     </p>
-                    <div className="whitespace-pre-wrap break-words text-sm text-foreground">
+                    <div className="whitespace-pre-wrap break-words text-sm text-foreground leading-relaxed">
                       {formatReviewValue(description.trim() || null)}
                     </div>
                   </dd>
                 </div>
-                <div>
-                  <dt className="text-muted-foreground text-xs uppercase tracking-wide">Tags</dt>
-                  <dd>{formatReviewValue(techStackTags)}</dd>
+                <div className="grid gap-1.5 px-4 py-3 sm:grid-cols-[minmax(11rem,13rem)_minmax(0,1fr)] sm:gap-x-8 sm:items-start sm:px-5 sm:py-3.5">
+                  <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide pt-0.5">Tags</dt>
+                  <dd className="min-w-0 break-words m-0">{formatReviewValue(techStackTags)}</dd>
                 </div>
-                <div>
-                  <dt className="text-muted-foreground text-xs uppercase tracking-wide">Stage</dt>
-                  <dd>{stages.find((s) => s.value === stage)?.label || stage}</dd>
+                <div className="grid gap-1.5 px-4 py-3 sm:grid-cols-[minmax(11rem,13rem)_minmax(0,1fr)] sm:gap-x-8 sm:items-start sm:px-5 sm:py-3.5">
+                  <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide pt-0.5">Stage</dt>
+                  <dd className="min-w-0 m-0">{stages.find((s) => s.value === stage)?.label || stage}</dd>
                 </div>
-                <div>
-                  <dt className="text-muted-foreground text-xs uppercase tracking-wide">Looking for help (short pitch)</dt>
-                  <dd>{formatReviewValue(supportNeeded.trim() || null)}</dd>
+                <div className="grid gap-1.5 px-4 py-3 sm:grid-cols-[minmax(11rem,13rem)_minmax(0,1fr)] sm:gap-x-8 sm:items-start sm:px-5 sm:py-3.5">
+                  <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide pt-0.5">
+                    Looking for help (short pitch)
+                  </dt>
+                  <dd className="min-w-0 break-words m-0">{formatReviewValue(supportNeeded.trim() || null)}</dd>
                 </div>
-                <div>
-                  <dt className="text-muted-foreground text-xs uppercase tracking-wide">Demo URL (from repo homepage)</dt>
-                  <dd>{formatReviewValue(homepage)}</dd>
+                <div className="grid gap-1.5 px-4 py-3 sm:grid-cols-[minmax(11rem,13rem)_minmax(0,1fr)] sm:gap-x-8 sm:items-start sm:px-5 sm:py-3.5">
+                  <dt className="text-muted-foreground text-xs font-medium uppercase tracking-wide pt-0.5">
+                    Demo URL (from repo homepage)
+                  </dt>
+                  <dd className="min-w-0 break-all sm:break-words m-0">{formatReviewValue(homepage)}</dd>
                 </div>
               </dl>
             </div>

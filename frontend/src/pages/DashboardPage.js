@@ -1,15 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { Link, NavLink } from 'react-router-dom';
+import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
-import { projectsAPI, collaborationAPI } from '../lib/api';
-import { 
-  Plus, FolderKanban, Trophy, Users, ChevronRight, 
-  Loader2, ExternalLink, Zap
+import { projectsAPI, collaborationAPI, notificationsAPI } from '../lib/api';
+import {
+  Plus,
+  FolderKanban,
+  Trophy,
+  Users,
+  ChevronRight,
+  Loader2,
+  ExternalLink,
+  Zap,
+  Bell,
 } from 'lucide-react';
 import Layout from '../components/Layout';
 import ProjectCard from '../components/ProjectCard';
 import CreateProjectModal from '../components/CreateProjectModal';
 import { Button } from '@/components/ui/button';
+
+function formatNotifWhen(iso) {
+  if (!iso) return '';
+  try {
+    return formatDistanceToNow(new Date(iso), { addSuffix: true });
+  } catch {
+    return '';
+  }
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -23,6 +40,8 @@ export default function DashboardPage() {
     inProgress: 0,
     pendingCollabs: 0
   });
+  const [notifPreview, setNotifPreview] = useState([]);
+  const [notifUnread, setNotifUnread] = useState(0);
 
   useEffect(() => {
     fetchData();
@@ -30,9 +49,10 @@ export default function DashboardPage() {
 
   const fetchData = async () => {
     try {
-      const [projectsRes, collabsRes] = await Promise.all([
+      const [projectsRes, collabsRes, notifRes] = await Promise.all([
         projectsAPI.getMyProjects(),
-        collaborationAPI.getMyRequests()
+        collaborationAPI.getMyRequests(),
+        notificationsAPI.list({ limit: 6, offset: 0 }),
       ]);
 
       const projectList = projectsRes.data.items || [];
@@ -40,6 +60,9 @@ export default function DashboardPage() {
 
       const collabList = collabsRes.data.items || [];
       setCollabRequests(collabList.filter(c => c.status === 'pending'));
+
+      setNotifPreview(notifRes.data.items || []);
+      setNotifUnread(typeof notifRes.data.unread_count === 'number' ? notifRes.data.unread_count : 0);
 
       // Calculate stats
       setStats({
@@ -166,6 +189,55 @@ export default function DashboardPage() {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            <div
+              className="bg-card border border-border rounded-xl shadow-card p-6"
+              data-testid="dashboard-notifications-preview"
+            >
+              <div className="flex items-center justify-between mb-4 gap-2">
+                <h3 className="font-semibold text-foreground flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-primary shrink-0" aria-hidden />
+                  Notifications
+                </h3>
+                {notifUnread > 0 ? (
+                  <span className="bg-primary/15 text-primary text-xs font-mono px-2 py-0.5 rounded-md border border-primary/30">
+                    {notifUnread} unread
+                  </span>
+                ) : null}
+              </div>
+              {notifPreview.length === 0 ? (
+                <p className="text-muted-foreground text-sm leading-relaxed">
+                  You are all caught up. Comments, collaboration requests, and project alerts also arrive by email when
+                  your account has a verified address and email is configured.
+                </p>
+              ) : (
+                <ul className="space-y-3">
+                  {notifPreview.map((n) => (
+                    <li key={n.id}>
+                      {n.project_id ? (
+                        <Link
+                          to={`/projects/${n.project_id}`}
+                          className="block rounded-md border border-transparent px-1 -mx-1 py-1 hover:bg-muted/80 hover:border-border transition-colors"
+                        >
+                          <p className="text-xs text-muted-foreground">{formatNotifWhen(n.created_at)}</p>
+                          <p className="text-sm font-medium text-foreground line-clamp-2">{n.title}</p>
+                          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{n.body}</p>
+                        </Link>
+                      ) : (
+                        <div className="px-1 py-1">
+                          <p className="text-xs text-muted-foreground">{formatNotifWhen(n.created_at)}</p>
+                          <p className="text-sm font-medium text-foreground line-clamp-2">{n.title}</p>
+                          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{n.body}</p>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-xs text-muted-foreground mt-4 leading-relaxed">
+                Use the bell in the header for the full list and to mark items as read.
+              </p>
+            </div>
+
             {/* Collaboration Requests */}
             <div className="bg-card border border-border rounded-xl shadow-card p-6">
               <div className="flex items-center justify-between mb-4">
