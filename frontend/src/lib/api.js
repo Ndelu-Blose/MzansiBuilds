@@ -76,7 +76,9 @@ export const githubAPI = {
   connectStart: () => api.post('/integrations/github/connect/start'),
   getAccount: () => api.get('/integrations/github/account'),
   disconnect: () => api.delete('/integrations/github/account'),
-  listRepos: (params = {}) => api.get('/integrations/github/repos', { params })
+  listRepos: (params = {}) => api.get('/integrations/github/repos', { params }),
+  repoLanguages: (repoId) => api.get(`/integrations/github/repos/${repoId}/languages`),
+  repoReadmeSummary: (repoId) => api.get(`/integrations/github/repos/${repoId}/readme-summary`),
 };
 
 // Project Updates API
