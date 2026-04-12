@@ -101,16 +101,25 @@ async def send_welcome_email(to: str, name: str):
     return await send_email(to, subject, html)
 
 
+def _project_url(project_id: str | None) -> str:
+    base = APP_PUBLIC_URL.rstrip("/")
+    if project_id:
+        return f"{base}/projects/{project_id}"
+    return f"{base}/dashboard"
+
+
 async def send_collaboration_request_email(
-    to: str, 
-    owner_name: str, 
-    project_title: str, 
+    to: str,
+    owner_name: str,
+    project_title: str,
     requester_name: str,
-    message: str = None
+    message: str = None,
+    project_id: str | None = None,
 ):
     """Send email when someone requests to collaborate"""
     subject = f"New collaboration request on {project_title}"
     message_section = f'<p style="color: #a1a1aa; background-color: #27272a; padding: 15px; border-radius: 4px; margin: 20px 0;"><em>"{message}"</em></p>' if message else ''
+    project_url = _project_url(project_id)
     
     html = f"""
     <!DOCTYPE html>
@@ -140,7 +149,67 @@ async def send_collaboration_request_email(
             <p><span class="highlight">{requester_name}</span> wants to collaborate on your project <span class="highlight">{project_title}</span>.</p>
             {message_section}
             <p>Review the request and decide if you want to work together!</p>
-            <a href="{APP_PUBLIC_URL}/dashboard" class="button">View Request</a>
+            <a href="{project_url}" class="button">Open project</a>
+            <div class="footer">
+                <p>Built with pride in South Africa 🇿🇦</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return await send_email(to, subject, html)
+
+
+async def send_collaboration_decision_email(
+    to: str,
+    requester_name: str,
+    project_title: str,
+    owner_name: str,
+    decision: str,
+    project_id: str | None = None,
+):
+    """Notify the requester when the project owner accepts or rejects a collaboration request."""
+    decision_lower = (decision or "").lower()
+    accepted = decision_lower == "accepted"
+    subject = (
+        f"You are in: {project_title}" if accepted else f"Update on your request: {project_title}"
+    )
+    project_url = _project_url(project_id)
+    headline = "Collaboration accepted" if accepted else "Collaboration request declined"
+    body_copy = (
+        f"<p><span class=\"highlight\">{owner_name}</span> accepted your request to collaborate on "
+        f"<span class=\"highlight\">{project_title}</span>. Jump in and introduce yourself on the project page.</p>"
+        if accepted
+        else f"<p><span class=\"highlight\">{owner_name}</span> declined your collaboration request for "
+        f"<span class=\"highlight\">{project_title}</span>. You can still explore other projects on the feed.</p>"
+    )
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #e4e4e7; background-color: #09090b; margin: 0; padding: 20px; }}
+            .container {{ max-width: 600px; margin: 0 auto; background-color: #18181b; border-radius: 8px; padding: 40px; }}
+            .header {{ text-align: center; margin-bottom: 30px; }}
+            .logo {{ font-size: 28px; font-weight: bold; color: #fff; }}
+            .logo span {{ color: {BRAND_ACCENT}; }}
+            h1 {{ color: #fff; font-size: 24px; margin-bottom: 10px; }}
+            p {{ color: #a1a1aa; margin: 15px 0; }}
+            .highlight {{ color: {BRAND_ACCENT}; font-weight: 600; }}
+            .button {{ display: inline-block; background-color: {BRAND_ACCENT}; color: {BRAND_ACCENT_TEXT}; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600; margin-top: 20px; }}
+            .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #27272a; text-align: center; color: #71717a; font-size: 14px; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div class="logo">Mzansi<span>Builds</span></div>
+            </div>
+            <h1>{headline}</h1>
+            <p>Hey {requester_name},</p>
+            {body_copy}
+            <a href="{project_url}" class="button">View project</a>
             <div class="footer">
                 <p>Built with pride in South Africa 🇿🇦</p>
             </div>
@@ -156,10 +225,12 @@ async def send_comment_notification_email(
     owner_name: str,
     project_title: str,
     commenter_name: str,
-    comment_preview: str
+    comment_preview: str,
+    project_id: str | None = None,
 ):
     """Send email when someone comments on a project"""
     subject = f"New comment on {project_title}"
+    project_url = _project_url(project_id)
     # Truncate comment preview
     if len(comment_preview) > 150:
         comment_preview = comment_preview[:150] + "..."
@@ -194,7 +265,7 @@ async def send_comment_notification_email(
             <div class="comment-box">
                 <p style="margin: 0; color: #e4e4e7;">"{comment_preview}"</p>
             </div>
-            <a href="{APP_PUBLIC_URL}/dashboard" class="button">View Comment</a>
+            <a href="{project_url}" class="button">View comment</a>
             <div class="footer">
                 <p>Built with pride in South Africa 🇿🇦</p>
             </div>

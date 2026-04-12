@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { formatDistanceToNow } from 'date-fns';
 import { Rss, Trophy, FolderKanban, LogOut, Menu, X, Code, Bell } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { notificationsAPI } from '../lib/api';
@@ -14,6 +15,24 @@ const desktopNavLink = ({ isActive }) =>
       ? 'text-foreground border-primary'
       : 'text-muted-foreground border-transparent hover:text-foreground'
   );
+
+function formatNotificationTime(iso) {
+  if (!iso) return '';
+  try {
+    return formatDistanceToNow(new Date(iso), { addSuffix: true });
+  } catch {
+    return '';
+  }
+}
+
+function notificationTypeLabel(type) {
+  if (type === 'collaboration_request') return 'Collaboration';
+  if (type === 'collaboration_decision') return 'Collaboration';
+  if (type === 'project_comment') return 'Comment';
+  if (type === 'milestone_completed') return 'Milestone';
+  if (type === 'project_update_posted') return 'Update';
+  return 'Alert';
+}
 
 const mobileNavLink = ({ isActive }) =>
   cn(
@@ -145,27 +164,43 @@ export default function SiteHeader({ variant = 'app' }) {
                     )}
                   </button>
                 </PopoverTrigger>
-                <PopoverContent align="end" className="w-80 p-0">
-                  <div className="px-3 py-2 border-b border-border font-medium text-sm text-foreground">Notifications</div>
-                  <div className="max-h-80 overflow-y-auto">
+                <PopoverContent align="end" className="w-[min(100vw-1.5rem,24rem)] sm:w-[28rem] p-0 shadow-lg">
+                  <div className="px-3 py-2.5 sm:px-4 border-b border-border flex items-center justify-between gap-2">
+                    <span className="font-medium text-sm text-foreground">Notifications</span>
+                    {notifUnread > 0 ? (
+                      <span className="text-xs text-muted-foreground">{notifUnread} unread</span>
+                    ) : null}
+                  </div>
+                  <div className="max-h-[min(70vh,22rem)] overflow-y-auto">
                     {notifLoading ? (
                       <p className="p-3 text-sm text-muted-foreground">Loading…</p>
                     ) : notifItems.length === 0 ? (
-                      <p className="p-3 text-sm text-muted-foreground">No notifications yet.</p>
+                      <p className="p-4 text-sm text-muted-foreground leading-relaxed">
+                        No notifications yet. When someone comments, requests to collaborate, or you get project updates,
+                        they will show up here. We will also email you when it matters.
+                      </p>
                     ) : (
                       notifItems.map((n) => (
                         <button
                           key={n.id}
                           type="button"
                           className={cn(
-                            'w-full text-left px-3 py-2.5 border-b border-border last:border-0 hover:bg-muted/80 transition-colors text-sm',
-                            !n.read_at && 'bg-primary/5'
+                            'w-full text-left px-3 py-3 sm:px-4 border-b border-border last:border-0 hover:bg-muted/80 transition-colors text-sm',
+                            !n.read_at && 'bg-primary/[0.06]'
                           )}
                           data-testid="notification-row"
                           onClick={() => handleNotificationClick(n)}
                         >
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <span className="text-[10px] uppercase tracking-wide text-primary font-semibold shrink-0">
+                              {notificationTypeLabel(n.type)}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              {formatNotificationTime(n.created_at)}
+                            </span>
+                          </div>
                           <p className="font-medium text-foreground line-clamp-2">{n.title}</p>
-                          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{n.body}</p>
+                          <p className="text-xs text-muted-foreground line-clamp-3 mt-0.5 leading-snug">{n.body}</p>
                         </button>
                       ))
                     )}

@@ -122,6 +122,11 @@ async function installBackendMock(page, { actingUserId, projectOverrides } = {})
       return;
     }
 
+    if (method === 'GET' && path === '/api/notifications') {
+      await json({ items: [], unread_count: 0, limit: 20, offset: 0 });
+      return;
+    }
+
     if (method === 'GET' && path === '/api/my/projects') {
       const items =
         actingUserId === VISITOR_ID
