@@ -30,14 +30,15 @@ from models import (
     Comment, CollaborationRequest, UserSession, LoginAttempt,
     ProjectStage, CollaborationStatus, ConnectedAccount, ConnectedProvider,
     ProjectRepository, ProjectLanguage, ProjectCommit, ProjectContributor, ProjectFileHighlight,
-    RepoProvider, OwnershipType, VerificationStatus, ProjectType, ProjectUpdateType, MilestoneStatus
+    RepoProvider, OwnershipType, VerificationStatus, ProjectType, ProjectUpdateType, MilestoneStatus,
+    Notification,
 )
 from schemas import (
     UserCreate, UserLogin, UserResponse, UserWithProfile,
     ProfileCreate, ProfileUpdate, ProfileResponse,
     ProjectCreate, ProjectUpdate as ProjectUpdateSchema, ProjectResponse, 
     ProjectWithOwner, ProjectDetail,
-    ProjectUpdateCreate, ProjectUpdateResponse, ProjectUpdateWithProject,
+    ProjectUpdateCreate, ProjectUpdatePatch, ProjectUpdateResponse, ProjectUpdateWithProject,
     MilestoneCreate, MilestoneUpdate, MilestoneResponse,
     CommentCreate, CommentResponse, CommentWithUser,
     CollaborationRequestCreate, CollaborationRequestUpdate, 
@@ -56,6 +57,13 @@ from github_api_service import list_user_repos, get_repo_by_id, get_repo_contrib
 from project_import_service import create_imported_project
 from project_sync_service import run_repo_sync
 from project_activity_service import merge_project_activity
+from notification_service import (
+    add_notification,
+    NOTIFICATION_TYPE_COLLABORATION_REQUEST,
+    NOTIFICATION_TYPE_PROJECT_COMMENT,
+    NOTIFICATION_TYPE_MILESTONE_COMPLETED,
+    NOTIFICATION_TYPE_PROJECT_UPDATE_POSTED,
+)
 from oauth_state_service import create_oauth_state, consume_oauth_state, cleanup_expired_states
 from email_service import (
     send_welcome_email, 
@@ -429,7 +437,7 @@ def encrypt_connected_account_token_or_503(token: str) -> str:
 
 
 def project_update_to_response(update: ProjectUpdate) -> dict:
-    return {
+    d = {
         "id": update.id,
         "project_id": update.project_id,
         "author_user_id": update.author_user_id,
@@ -438,6 +446,22 @@ def project_update_to_response(update: ProjectUpdate) -> dict:
         "update_type": update.update_type.value if update.update_type else "progress",
         "created_at": update.created_at.isoformat() if update.created_at else None,
         "updated_at": update.updated_at.isoformat() if update.updated_at else None,
+    }
+    author = getattr(update, "author", None)
+    if author is not None:
+        d["author"] = user_to_response(author)
+    return d
+
+
+def notification_to_response(n: Notification) -> dict:
+    return {
+        "id": n.id,
+        "type": n.type,
+        "title": n.title,
+        "body": n.body,
+        "project_id": n.project_id,
+        "read_at": n.read_at.isoformat() if n.read_at else None,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
     }
 
 
@@ -1532,9 +1556,81 @@ async def create_project_update(project_id: str, data: ProjectUpdateCreate, user
         update_type=ProjectUpdateType(data.update_type.value),
     )
     db.add(update)
+    await db.flush()
+    # Notify project owner when someone other than the owner posts (reserved for future multi-author).
+    if project.user_id and user.id != project.user_id:
+        actor = user.name or user.email.split("@")[0]
+        preview = (data.title[:120] + " — " + (data.body or "")[:200])[:500]
+        add_notification(
+            db,
+            user_id=project.user_id,
+            notif_type=NOTIFICATION_TYPE_PROJECT_UPDATE_POSTED,
+            title=f"New update on {project.title}",
+            body=f"{actor}: {preview}",
+            project_id=project_id,
+        )
     await db.commit()
-    await db.refresh(update)
-    return project_update_to_response(update)
+    result = await db.execute(
+        select(ProjectUpdate)
+        .options(selectinload(ProjectUpdate.author))
+        .where(ProjectUpdate.id == update.id)
+    )
+    row = result.scalar_one()
+    return project_update_to_response(row)
+
+
+@api_router.patch("/projects/{project_id}/updates/{update_id}")
+async def patch_project_update(
+    project_id: str,
+    update_id: str,
+    data: ProjectUpdatePatch,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if data.title is None and data.body is None and data.update_type is None:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = await db.execute(
+        select(ProjectUpdate)
+        .options(selectinload(ProjectUpdate.project), selectinload(ProjectUpdate.author))
+        .where(ProjectUpdate.id == update_id, ProjectUpdate.project_id == project_id)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Update not found")
+    if row.project.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    if data.title is not None:
+        row.title = data.title
+    if data.body is not None:
+        row.body = data.body
+    if data.update_type is not None:
+        row.update_type = ProjectUpdateType(data.update_type.value)
+    row.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    res = await db.execute(
+        select(ProjectUpdate).options(selectinload(ProjectUpdate.author)).where(ProjectUpdate.id == update_id)
+    )
+    u = res.scalar_one()
+    return project_update_to_response(u)
+
+
+@api_router.delete("/projects/{project_id}/updates/{update_id}")
+async def delete_project_update(project_id: str, update_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ProjectUpdate)
+        .options(selectinload(ProjectUpdate.project))
+        .where(ProjectUpdate.id == update_id, ProjectUpdate.project_id == project_id)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Update not found")
+    if row.project.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    await db.delete(row)
+    await db.commit()
+    return {"message": "Update deleted"}
 
 
 @api_router.get("/projects/{project_id}/updates")
@@ -1545,6 +1641,7 @@ async def get_project_updates(project_id: str, limit: int = 20, offset: int = 0,
     
     query = (
         select(ProjectUpdate)
+        .options(selectinload(ProjectUpdate.author))
         .where(ProjectUpdate.project_id == project_id)
         .order_by(ProjectUpdate.created_at.desc())
         .offset(offset)
@@ -1598,7 +1695,8 @@ async def update_milestone(project_id: str, milestone_id: str, data: MilestoneUp
     
     if milestone.project.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
+    milestone_done_notify = False
     if data.title is not None:
         milestone.title = data.title
     if data.description is not None:
@@ -1611,10 +1709,23 @@ async def update_milestone(project_id: str, milestone_id: str, data: MilestoneUp
             milestone.completed_at = datetime.now(timezone.utc)
         if was_done and next_status != MilestoneStatus.done:
             milestone.completed_at = None
+        if next_status == MilestoneStatus.done and not was_done:
+            milestone_done_notify = True
     if data.due_date is not None:
         milestone.due_date = data.due_date
     milestone.updated_at = datetime.now(timezone.utc)
-    
+
+    if milestone_done_notify and milestone.project.user_id:
+        proj_title = milestone.project.title or "your project"
+        add_notification(
+            db,
+            user_id=milestone.project.user_id,
+            notif_type=NOTIFICATION_TYPE_MILESTONE_COMPLETED,
+            title=f"Milestone completed: {milestone.title}",
+            body=f'On "{proj_title}".',
+            project_id=milestone.project_id,
+        )
+
     await db.commit()
     await db.refresh(milestone)
     
@@ -1653,7 +1764,11 @@ async def get_project_activity(project_id: str, db: AsyncSession = Depends(get_d
         select(ProjectCommit).where(ProjectCommit.project_id == project_id).order_by(ProjectCommit.committed_at.desc()).limit(50)
     )
     updates_result = await db.execute(
-        select(ProjectUpdate).where(ProjectUpdate.project_id == project_id).order_by(ProjectUpdate.created_at.desc()).limit(50)
+        select(ProjectUpdate)
+        .options(selectinload(ProjectUpdate.author))
+        .where(ProjectUpdate.project_id == project_id)
+        .order_by(ProjectUpdate.created_at.desc())
+        .limit(50)
     )
     milestones_result = await db.execute(
         select(Milestone).where(Milestone.project_id == project_id).order_by(Milestone.updated_at.desc()).limit(50)
@@ -1697,9 +1812,22 @@ async def create_comment(project_id: str, data: CommentCreate, background_tasks:
         content=data.content
     )
     db.add(comment)
+    await db.flush()
+
+    if project.user and project.user.id != user.id:
+        commenter_name = user.name or user.email.split("@")[0]
+        add_notification(
+            db,
+            user_id=project.user.id,
+            notif_type=NOTIFICATION_TYPE_PROJECT_COMMENT,
+            title=f"New comment on {project.title}",
+            body=f"{commenter_name}: {(data.content or '')[:500]}",
+            project_id=project_id,
+        )
+
     await db.commit()
     await db.refresh(comment)
-    
+
     # Send email notification to project owner (if commenter is not the owner)
     if project.user and project.user.id != user.id:
         background_tasks.add_task(
@@ -1752,6 +1880,28 @@ async def get_project_comments(project_id: str, limit: int = 50, offset: int = 0
     }
 
 
+@api_router.delete("/projects/{project_id}/comments/{comment_id}")
+async def delete_project_comment(
+    project_id: str,
+    comment_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Comment)
+        .options(selectinload(Comment.project))
+        .where(Comment.id == comment_id, Comment.project_id == project_id)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    if row.user_id != user.id and row.project.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this comment")
+    await db.delete(row)
+    await db.commit()
+    return {"message": "Comment deleted"}
+
+
 # ========== COLLABORATION ENDPOINTS ==========
 @api_router.post("/projects/{project_id}/collaborate")
 async def request_collaboration(project_id: str, data: CollaborationRequestCreate, background_tasks: BackgroundTasks, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -1787,6 +1937,18 @@ async def request_collaboration(project_id: str, data: CollaborationRequestCreat
         message=data.message
     )
     db.add(collab)
+    await db.flush()
+    if project.user_id:
+        requester_name = user.name or user.email.split("@")[0]
+        msg_preview = (data.message or f"{requester_name} wants to collaborate on your project.")[:900]
+        add_notification(
+            db,
+            user_id=project.user_id,
+            notif_type=NOTIFICATION_TYPE_COLLABORATION_REQUEST,
+            title=f"Collaboration request: {project.title}",
+            body=msg_preview,
+            project_id=project_id,
+        )
     await db.commit()
     await db.refresh(collab)
     
@@ -1870,6 +2032,59 @@ async def update_collaboration(collab_id: str, data: CollaborationRequestUpdate,
         "status": collab.status.value,
         "created_at": collab.created_at.isoformat() if collab.created_at else None
     }
+
+
+# ========== NOTIFICATIONS ==========
+@api_router.get("/notifications")
+async def list_notifications(
+    limit: int = 20,
+    offset: int = 0,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    unread_result = await db.execute(
+        select(func.count(Notification.id)).where(
+            Notification.user_id == user.id,
+            Notification.read_at.is_(None),
+        )
+    )
+    unread_count = int(unread_result.scalar() or 0)
+    result = await db.execute(
+        select(Notification)
+        .where(Notification.user_id == user.id)
+        .order_by(Notification.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = result.scalars().all()
+    return {
+        "items": [notification_to_response(n) for n in rows],
+        "unread_count": unread_count,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@api_router.patch("/notifications/{notification_id}/read")
+async def mark_notification_read(
+    notification_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == user.id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    if row.read_at is None:
+        row.read_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(row)
+    return notification_to_response(row)
 
 
 # ========== FEED ENDPOINT ==========

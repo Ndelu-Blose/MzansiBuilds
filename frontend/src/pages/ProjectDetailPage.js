@@ -47,6 +47,12 @@ export default function ProjectDetailPage() {
   const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const [updateError, setUpdateError] = useState('');
   const [updateSuccess, setUpdateSuccess] = useState('');
+  const [editingUpdateId, setEditingUpdateId] = useState(null);
+  const [editUpdateTitle, setEditUpdateTitle] = useState('');
+  const [editUpdateBody, setEditUpdateBody] = useState('');
+  const [editUpdateType, setEditUpdateType] = useState('progress');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [commentBusyId, setCommentBusyId] = useState(null);
   const [milestoneError, setMilestoneError] = useState('');
   const [milestoneSuccess, setMilestoneSuccess] = useState('');
   const [syncFeedbackError, setSyncFeedbackError] = useState('');
@@ -124,6 +130,64 @@ export default function ProjectDetailPage() {
     }
   };
 
+  const startEditUpdate = (update) => {
+    setUpdateError('');
+    setUpdateSuccess('');
+    setEditingUpdateId(update.id);
+    setEditUpdateTitle(update.title);
+    setEditUpdateBody(update.body);
+    setEditUpdateType(update.update_type || 'progress');
+  };
+
+  const cancelEditUpdate = () => {
+    setEditingUpdateId(null);
+    setEditUpdateTitle('');
+    setEditUpdateBody('');
+    setEditUpdateType('progress');
+  };
+
+  const handleSaveEditUpdate = async (e) => {
+    e.preventDefault();
+    if (!editUpdateTitle.trim() || !editUpdateBody.trim()) {
+      setUpdateError('Title and update text are required.');
+      return;
+    }
+    setIsSavingEdit(true);
+    setUpdateError('');
+    try {
+      const response = await updatesAPI.update(id, editingUpdateId, {
+        title: editUpdateTitle.trim(),
+        body: editUpdateBody.trim(),
+        update_type: editUpdateType,
+      });
+      setUpdates(updates.map((u) => (u.id === editingUpdateId ? response.data : u)));
+      cancelEditUpdate();
+      setUpdateSuccess('Update saved.');
+      const activityRes = await activityAPI.list(id);
+      setActivityItems(activityRes.data.items || []);
+    } catch (error) {
+      setUpdateError(error.response?.data?.detail || 'Could not save update.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleDeleteUpdate = async (update) => {
+    if (!window.confirm('Delete this update? This cannot be undone.')) return;
+    setUpdateError('');
+    setUpdateSuccess('');
+    try {
+      await updatesAPI.delete(id, update.id);
+      setUpdates(updates.filter((u) => u.id !== update.id));
+      if (editingUpdateId === update.id) cancelEditUpdate();
+      setUpdateSuccess('Update deleted.');
+      const activityRes = await activityAPI.list(id);
+      setActivityItems(activityRes.data.items || []);
+    } catch (error) {
+      setUpdateError(error.response?.data?.detail || 'Could not delete update.');
+    }
+  };
+
   const handleAddMilestone = async (e) => {
     e.preventDefault();
     setMilestoneError('');
@@ -187,6 +251,19 @@ export default function ProjectDetailPage() {
       console.error('Error posting comment:', error);
     } finally {
       setIsPostingComment(false);
+    }
+  };
+
+  const handleDeleteComment = async (comment) => {
+    if (!window.confirm('Delete this comment?')) return;
+    setCommentBusyId(comment.id);
+    try {
+      await commentsAPI.delete(id, comment.id);
+      setComments(comments.filter((c) => c.id !== comment.id));
+    } catch (error) {
+      console.error('Error deleting comment:', error);
+    } finally {
+      setCommentBusyId(null);
     }
   };
 
@@ -566,19 +643,75 @@ export default function ProjectDetailPage() {
               ) : (
                 <div className="space-y-4">
                   {updates.map(update => (
-                    <div 
-                      key={update.id} 
+                    <div
+                      key={update.id}
                       className="bg-card border border-border p-4 rounded-xl shadow-card"
                       data-testid="update-item"
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant={badgeVariantForStatus(update.update_type)} className="font-mono">{humanize(update.update_type)}</Badge>
-                        <p className="text-foreground font-medium">{update.title}</p>
-                      </div>
-                      <p className="text-foreground whitespace-pre-wrap">{update.body}</p>
-                      <p className="font-mono text-xs text-muted-foreground mt-2">
-                        {formatDate(update.created_at)}
-                      </p>
+                      {editingUpdateId === update.id ? (
+                        <form onSubmit={handleSaveEditUpdate} className="space-y-2" data-testid="edit-update-form">
+                          <div className="mb-2">
+                            <input
+                              value={editUpdateTitle}
+                              onChange={(e) => setEditUpdateTitle(e.target.value)}
+                              className={`w-full ${inputBase} px-3 py-2 text-sm`}
+                            />
+                          </div>
+                          <select
+                            value={editUpdateType}
+                            onChange={(e) => setEditUpdateType(e.target.value)}
+                            className={`w-full ${inputBase} px-3 py-2 text-sm`}
+                          >
+                            <option value="progress">Progress</option>
+                            <option value="milestone">Milestone</option>
+                            <option value="blocker">Blocker</option>
+                            <option value="learning">Learning</option>
+                            <option value="release">Release</option>
+                          </select>
+                          <textarea
+                            value={editUpdateBody}
+                            onChange={(e) => setEditUpdateBody(e.target.value)}
+                            className={`w-full ${inputBase} px-3 py-2 text-sm resize-none`}
+                            rows={3}
+                            data-testid="edit-update-body"
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <Button type="button" variant="ghost" onClick={cancelEditUpdate} data-testid="cancel-update-btn">
+                              Cancel
+                            </Button>
+                            <Button type="submit" disabled={isSavingEdit} data-testid="save-update-btn">
+                              {isSavingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                              Save
+                            </Button>
+                          </div>
+                        </form>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+                            <div className="flex flex-wrap items-center gap-2 min-w-0">
+                              <Badge variant={badgeVariantForStatus(update.update_type)} className="font-mono">{humanize(update.update_type)}</Badge>
+                              <p className="text-foreground font-medium">{update.title}</p>
+                            </div>
+                            {isOwner && (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button type="button" variant="ghost" size="sm" onClick={() => startEditUpdate(update)} data-testid="edit-update-btn" aria-label="Edit update">
+                                  <Edit2 className="w-4 h-4" />
+                                </Button>
+                                <Button type="button" variant="ghost" size="sm" onClick={() => handleDeleteUpdate(update)} data-testid="delete-update-btn" aria-label="Delete update">
+                                  <Trash2 className="w-4 h-4 text-destructive" />
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                          <p className="text-foreground whitespace-pre-wrap">{update.body}</p>
+                          <p className="font-mono text-xs text-muted-foreground mt-2">
+                            {formatDate(update.created_at)}
+                            {update.author && (
+                              <span className="text-muted-foreground"> · {update.author.name || update.author.email?.split('@')[0] || 'Author'}</span>
+                            )}
+                          </p>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -749,16 +882,35 @@ export default function ProjectDetailPage() {
                       className="border-b border-border pb-4 last:border-0"
                       data-testid="comment-item"
                     >
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
-                          {comment.user?.name?.[0]?.toUpperCase() || 'U'}
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
+                            {comment.user?.name?.[0]?.toUpperCase() || 'U'}
+                          </div>
+                          <span className="text-sm font-medium text-foreground">
+                            {comment.user?.name || 'Anonymous'}
+                          </span>
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {formatDate(comment.created_at)}
+                          </span>
                         </div>
-                        <span className="text-sm font-medium text-foreground">
-                          {comment.user?.name || 'Anonymous'}
-                        </span>
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {formatDate(comment.created_at)}
-                        </span>
+                        {isAuthenticated && (isOwner || user?.id === comment.user_id) && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={commentBusyId === comment.id}
+                            onClick={() => handleDeleteComment(comment)}
+                            data-testid="delete-comment-btn"
+                            aria-label="Delete comment"
+                          >
+                            {commentBusyId === comment.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4 text-destructive" />
+                            )}
+                          </Button>
+                        )}
                       </div>
                       <p className="text-muted-foreground pl-8">{comment.content}</p>
                     </div>
