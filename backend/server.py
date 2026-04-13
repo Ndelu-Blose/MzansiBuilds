@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, BackgroundTasks, Query
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -612,6 +612,13 @@ async def _compute_user_trust(db: AsyncSession, user_id: str) -> dict:
     }
 
 
+async def _compute_user_trust_map(db: AsyncSession, user_ids: List[str]) -> dict:
+    trust_map = {}
+    for uid in {uid for uid in user_ids if uid}:
+        trust_map[uid] = await _compute_user_trust(db, uid)
+    return trust_map
+
+
 def _health_rank(value: Optional[str]) -> int:
     if value == "active":
         return 3
@@ -765,6 +772,7 @@ def project_to_response(
     last_activity_at: Optional[datetime] = None,
     owner_trust: Optional[dict] = None,
 ) -> dict:
+    effective_last_activity = last_activity_at or project.updated_at or project.created_at
     tech_stack = None
     if project.tech_stack:
         try:
@@ -795,8 +803,11 @@ def project_to_response(
         "repo_connected": bool(project.repo_connected),
         "bookmark_count": int(bookmark_count or 0),
         "is_bookmarked": bool(is_bookmarked),
-        "last_activity_at": last_activity_at.isoformat() if last_activity_at else None,
-        "health_status": compute_project_health(project.stage.value if project.stage else None, last_activity_at),
+        "last_activity_at": effective_last_activity.isoformat() if effective_last_activity else None,
+        "health_status": compute_project_health(
+            project.stage.value if project.stage else None,
+            effective_last_activity,
+        ),
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
     }
@@ -1672,7 +1683,18 @@ async def add_project_bookmark(project_id: str, user: User = Depends(get_current
                 body=f"{user.name or user.email.split('@')[0]} bookmarked your project.",
                 project_id=project.id,
             )
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            conflict_result = await db.execute(
+                select(ProjectBookmark).where(
+                    ProjectBookmark.user_id == user.id,
+                    ProjectBookmark.project_id == project_id,
+                )
+            )
+            if not conflict_result.scalar_one_or_none():
+                raise HTTPException(status_code=500, detail="Could not save bookmark")
 
     counts = await _bookmark_count_map(db, [project_id])
     return {
@@ -2057,17 +2079,20 @@ async def get_open_roles(
         .where(Project.looking_for_help.is_(True))
     )
     projects = result.scalars().all()
-    project_ids = [p.id for p in projects]
-    bookmark_counts = await _bookmark_count_map(db, project_ids)
-    activity_map = await _project_activity_map(db, project_ids)
-
-    rows = []
+    prefiltered_projects = []
     for project in projects:
         if stage and (project.stage.value if project.stage else None) != stage:
             continue
         if tech and tech.lower() not in (project.tech_stack or "").lower():
             continue
-        owner_trust = await _compute_user_trust(db, project.user_id)
+        prefiltered_projects.append(project)
+
+    candidate_ids = [p.id for p in prefiltered_projects]
+    bookmark_counts = await _bookmark_count_map(db, candidate_ids)
+    activity_map = await _project_activity_map(db, candidate_ids)
+
+    candidate_rows = []
+    for project in prefiltered_projects:
         last_activity = activity_map.get(project.id) or project.updated_at
         health = compute_project_health(project.stage.value if project.stage else None, last_activity)
         if health_status and health != health_status:
@@ -2075,6 +2100,12 @@ async def get_open_roles(
         if activity_window_days and last_activity:
             if (datetime.now(timezone.utc) - last_activity).days > activity_window_days:
                 continue
+        candidate_rows.append((project, last_activity, health))
+
+    owner_trust_map = await _compute_user_trust_map(db, [project.user_id for project, _, _ in candidate_rows])
+    rows = []
+    for project, last_activity, health in candidate_rows:
+        owner_trust = owner_trust_map.get(project.user_id, {})
         if owner_score_band and owner_trust.get("builder_score_band") != owner_score_band:
             continue
         payload = project_to_response(
@@ -2110,9 +2141,10 @@ async def get_trending_projects(limit: int = 10, db: AsyncSession = Depends(get_
     project_ids = [p.id for p in projects]
     bookmark_counts = await _bookmark_count_map(db, project_ids)
     activity_map = await _project_activity_map(db, project_ids)
+    owner_trust_map = await _compute_user_trust_map(db, [p.user_id for p in projects])
     ranked = []
     for p in projects:
-        owner_trust = await _compute_user_trust(db, p.user_id)
+        owner_trust = owner_trust_map.get(p.user_id, {})
         last_activity = activity_map.get(p.id) or p.updated_at
         health = compute_project_health(p.stage.value if p.stage else None, last_activity)
         momentum_score = _project_momentum_score(
@@ -2139,9 +2171,10 @@ async def get_trending_projects(limit: int = 10, db: AsyncSession = Depends(get_
 async def get_trending_builders(limit: int = 10, db: AsyncSession = Depends(get_db)):
     users_result = await db.execute(select(User).options(selectinload(User.profile)))
     users = users_result.scalars().all()
+    trust_map = await _compute_user_trust_map(db, [u.id for u in users])
     ranked = []
     for row in users:
-        trust = await _compute_user_trust(db, row.id)
+        trust = trust_map.get(row.id, {})
         momentum_score = _builder_momentum_score(
             builder_score=trust.get("builder_score"),
             receipts_count=trust.get("receipts_count"),
@@ -2304,7 +2337,7 @@ async def refresh_project_repo(project_id: str, user: User = Depends(get_current
 @api_router.get("/projects/{project_id}/suggested-collaborators", response_model=List[SuggestedCollaboratorResponse])
 async def get_suggested_collaborators(
     project_id: str,
-    limit: int = 10,
+    limit: int = Query(default=10, ge=0, le=50),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2337,11 +2370,13 @@ async def get_suggested_collaborators(
         ranked.append((candidate, score, matched_skills, candidate_skills))
 
     ranked.sort(key=lambda item: item[1], reverse=True)
-    top = ranked[: max(1, min(limit, 50))]
+    effective_limit = max(0, min(limit, 50))
+    top = ranked[:effective_limit]
+    trust_map = await _compute_user_trust_map(db, [candidate.id for candidate, _, _, _ in top])
 
     response_items = []
     for candidate, score, matched_skills, candidate_skills in top:
-        trust = await _compute_user_trust(db, candidate.id)
+        trust = trust_map.get(candidate.id, {})
         response_items.append(
             {
                 "user_id": candidate.id,
@@ -3073,7 +3108,7 @@ async def create_receipt_for_collaboration(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    receipt = await create_collaboration_receipt(
+    receipt, created = await create_collaboration_receipt(
         db,
         collaboration_id=collab_id,
         owner_user_id=user.id,
@@ -3082,15 +3117,16 @@ async def create_receipt_for_collaboration(
     )
     project_result = await db.execute(select(Project).where(Project.id == receipt.project_id))
     project = project_result.scalar_one_or_none()
-    await _add_notification_if_not_duplicate(
-        db,
-        user_id=receipt.collaborator_user_id,
-        notif_type=NOTIFICATION_TYPE_RECEIPT_ISSUED,
-        title=f"Collaboration receipt issued for {project.title if project else 'a project'}",
-        body=f"{user.name or user.email.split('@')[0]} acknowledged your contribution.",
-        project_id=receipt.project_id,
-    )
-    await db.commit()
+    if created:
+        await _add_notification_if_not_duplicate(
+            db,
+            user_id=receipt.collaborator_user_id,
+            notif_type=NOTIFICATION_TYPE_RECEIPT_ISSUED,
+            title=f"Collaboration receipt issued for {project.title if project else 'a project'}",
+            body=f"{user.name or user.email.split('@')[0]} acknowledged your contribution.",
+            project_id=receipt.project_id,
+        )
+        await db.commit()
     return receipt_to_response(receipt, project_title=project.title if project else None)
 
 
