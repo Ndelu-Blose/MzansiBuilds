@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -17,7 +17,7 @@ async def create_collaboration_receipt(
     owner_user_id: str,
     role_title: Optional[str],
     summary: Optional[str],
-) -> CollaborationReceipt:
+) -> Tuple[CollaborationReceipt, bool]:
     collab_result = await db.execute(
         select(CollaborationRequest)
         .options(selectinload(CollaborationRequest.project))
@@ -41,7 +41,7 @@ async def create_collaboration_receipt(
     )
     existing_receipt = duplicate_result.scalar_one_or_none()
     if existing_receipt:
-        return existing_receipt
+        return existing_receipt, False
 
     receipt = CollaborationReceipt(
         project_id=collab.project_id,
@@ -69,8 +69,8 @@ async def create_collaboration_receipt(
         )
         existing = existing_result.scalar_one_or_none()
         if existing:
-            return existing
+            return existing, False
         raise HTTPException(status_code=500, detail="Could not create collaboration receipt")
 
     await db.refresh(receipt)
-    return receipt
+    return receipt, True

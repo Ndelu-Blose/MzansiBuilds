@@ -2079,18 +2079,20 @@ async def get_open_roles(
         .where(Project.looking_for_help.is_(True))
     )
     projects = result.scalars().all()
-    project_ids = [p.id for p in projects]
-    bookmark_counts = await _bookmark_count_map(db, project_ids)
-    activity_map = await _project_activity_map(db, project_ids)
-    owner_trust_map = await _compute_user_trust_map(db, [p.user_id for p in projects])
-
-    rows = []
+    prefiltered_projects = []
     for project in projects:
         if stage and (project.stage.value if project.stage else None) != stage:
             continue
         if tech and tech.lower() not in (project.tech_stack or "").lower():
             continue
-        owner_trust = owner_trust_map.get(project.user_id, {})
+        prefiltered_projects.append(project)
+
+    candidate_ids = [p.id for p in prefiltered_projects]
+    bookmark_counts = await _bookmark_count_map(db, candidate_ids)
+    activity_map = await _project_activity_map(db, candidate_ids)
+
+    candidate_rows = []
+    for project in prefiltered_projects:
         last_activity = activity_map.get(project.id) or project.updated_at
         health = compute_project_health(project.stage.value if project.stage else None, last_activity)
         if health_status and health != health_status:
@@ -2098,6 +2100,12 @@ async def get_open_roles(
         if activity_window_days and last_activity:
             if (datetime.now(timezone.utc) - last_activity).days > activity_window_days:
                 continue
+        candidate_rows.append((project, last_activity, health))
+
+    owner_trust_map = await _compute_user_trust_map(db, [project.user_id for project, _, _ in candidate_rows])
+    rows = []
+    for project, last_activity, health in candidate_rows:
+        owner_trust = owner_trust_map.get(project.user_id, {})
         if owner_score_band and owner_trust.get("builder_score_band") != owner_score_band:
             continue
         payload = project_to_response(
@@ -3100,7 +3108,7 @@ async def create_receipt_for_collaboration(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    receipt = await create_collaboration_receipt(
+    receipt, created = await create_collaboration_receipt(
         db,
         collaboration_id=collab_id,
         owner_user_id=user.id,
@@ -3109,15 +3117,16 @@ async def create_receipt_for_collaboration(
     )
     project_result = await db.execute(select(Project).where(Project.id == receipt.project_id))
     project = project_result.scalar_one_or_none()
-    await _add_notification_if_not_duplicate(
-        db,
-        user_id=receipt.collaborator_user_id,
-        notif_type=NOTIFICATION_TYPE_RECEIPT_ISSUED,
-        title=f"Collaboration receipt issued for {project.title if project else 'a project'}",
-        body=f"{user.name or user.email.split('@')[0]} acknowledged your contribution.",
-        project_id=receipt.project_id,
-    )
-    await db.commit()
+    if created:
+        await _add_notification_if_not_duplicate(
+            db,
+            user_id=receipt.collaborator_user_id,
+            notif_type=NOTIFICATION_TYPE_RECEIPT_ISSUED,
+            title=f"Collaboration receipt issued for {project.title if project else 'a project'}",
+            body=f"{user.name or user.email.split('@')[0]} acknowledged your contribution.",
+            project_id=receipt.project_id,
+        )
+        await db.commit()
     return receipt_to_response(receipt, project_title=project.title if project else None)
 
 
