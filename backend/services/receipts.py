@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,8 +39,9 @@ async def create_collaboration_receipt(
             CollaborationReceipt.collaborator_user_id == collab.requester_user_id,
         )
     )
-    if duplicate_result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Receipt already exists for this collaboration")
+    existing_receipt = duplicate_result.scalar_one_or_none()
+    if existing_receipt:
+        return existing_receipt
 
     receipt = CollaborationReceipt(
         project_id=collab.project_id,
@@ -54,6 +56,21 @@ async def create_collaboration_receipt(
         collaborator_acknowledged=False,
     )
     db.add(receipt)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        existing_result = await db.execute(
+            select(CollaborationReceipt).where(
+                CollaborationReceipt.project_id == collab.project_id,
+                CollaborationReceipt.owner_user_id == owner_user_id,
+                CollaborationReceipt.collaborator_user_id == collab.requester_user_id,
+            )
+        )
+        existing = existing_result.scalar_one_or_none()
+        if existing:
+            return existing
+        raise HTTPException(status_code=500, detail="Could not create collaboration receipt")
+
     await db.refresh(receipt)
     return receipt
