@@ -103,6 +103,20 @@ class User(Base):
     collaboration_requests = relationship("CollaborationRequest", back_populates="requester", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     connected_accounts = relationship("ConnectedAccount", back_populates="user", cascade="all, delete-orphan")
+    bookmarks = relationship("ProjectBookmark", back_populates="user", cascade="all, delete-orphan")
+    owned_collaboration_receipts = relationship(
+        "CollaborationReceipt",
+        back_populates="owner",
+        foreign_keys="CollaborationReceipt.owner_user_id",
+        cascade="all, delete-orphan",
+    )
+    collaborator_receipts = relationship(
+        "CollaborationReceipt",
+        back_populates="collaborator",
+        foreign_keys="CollaborationReceipt.collaborator_user_id",
+        cascade="all, delete-orphan",
+    )
+    digest_preference = relationship("DigestPreference", back_populates="user", uselist=False, cascade="all, delete-orphan")
 
 
 class UserSession(Base):
@@ -173,6 +187,25 @@ class Project(Base):
     repository = relationship("ProjectRepository", back_populates="project", uselist=False, cascade="all, delete-orphan")
     repo_contributors = relationship("ProjectContributor", back_populates="project", cascade="all, delete-orphan")
     commits = relationship("ProjectCommit", back_populates="project", cascade="all, delete-orphan")
+    bookmarks = relationship("ProjectBookmark", back_populates="project", cascade="all, delete-orphan")
+    collaboration_receipts = relationship("CollaborationReceipt", back_populates="project", cascade="all, delete-orphan")
+
+
+class ProjectBookmark(Base):
+    __tablename__ = "project_bookmarks"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+    user = relationship("User", back_populates="bookmarks")
+    project = relationship("Project", back_populates="bookmarks")
+
+    __table_args__ = (
+        Index("idx_project_bookmarks_user_project_unique", "user_id", "project_id", unique=True),
+        Index("idx_project_bookmarks_project_created", "project_id", "created_at"),
+    )
 
 
 class ProjectUpdate(Base):
@@ -258,6 +291,37 @@ class CollaborationRequest(Base):
     
     __table_args__ = (
         Index('idx_collab_project_requester', 'project_id', 'requester_user_id', unique=True),
+    )
+
+
+class CollaborationReceipt(Base):
+    __tablename__ = "collaboration_receipts"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    collaboration_id = Column(String(36), ForeignKey("collaboration_requests.id", ondelete="SET NULL"), nullable=True, index=True)
+    owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    collaborator_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_title = Column(String(255), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    summary = Column(Text, nullable=True)
+    owner_acknowledged = Column(Boolean, default=True)
+    collaborator_acknowledged = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    project = relationship("Project", back_populates="collaboration_receipts")
+    owner = relationship("User", back_populates="owned_collaboration_receipts", foreign_keys=[owner_user_id])
+    collaborator = relationship("User", back_populates="collaborator_receipts", foreign_keys=[collaborator_user_id])
+
+    __table_args__ = (
+        Index(
+            "idx_collab_receipts_unique_pair",
+            "project_id",
+            "owner_user_id",
+            "collaborator_user_id",
+            unique=True,
+        ),
     )
 
 
@@ -445,3 +509,16 @@ class OAuthState(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
     used_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+
+class DigestPreference(Base):
+    __tablename__ = "digest_preferences"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    enabled = Column(Boolean, default=True)
+    frequency = Column(String(20), default="weekly")
+    channels_json = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="digest_preference")

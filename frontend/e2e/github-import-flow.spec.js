@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 
-const BACKEND = process.env.E2E_BACKEND_ORIGIN || 'http://localhost:8001';
+const BACKEND = process.env.E2E_BACKEND_ORIGIN || 'http://localhost:8000';
 const OWNER_ID = '00000000-0000-4000-8000-000000000001';
 const IMPORTED_PROJECT_ID = '00000000-0000-4000-8000-0000000000ab';
 const GITHUB_REPO_ID = 424242;

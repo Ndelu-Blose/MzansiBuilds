@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { projectsAPI, updatesAPI, milestonesAPI, commentsAPI, collaborationAPI, activityAPI } from '../lib/api';
+import { projectsAPI, updatesAPI, milestonesAPI, commentsAPI, collaborationAPI, activityAPI, bookmarksAPI, shareAPI } from '../lib/api';
 import {
   Loader2, ArrowLeft, Edit2, Trash2,
   Send, Users, MessageSquare, Target, Plus, Check,
@@ -12,6 +12,10 @@ import StageBadge from '../components/StageBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
+import ProjectTimeline from '../components/project/ProjectTimeline';
+import SuggestedCollaboratorCard from '../components/project/SuggestedCollaboratorCard';
+import TrustSignalsRow from '../components/profile/TrustSignalsRow';
+import ProjectShareCard from '../components/project/ProjectShareCard';
 
 const inputBase =
   'rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-all';
@@ -57,19 +61,25 @@ export default function ProjectDetailPage() {
   const [milestoneSuccess, setMilestoneSuccess] = useState('');
   const [syncFeedbackError, setSyncFeedbackError] = useState('');
   const [showCollabForm, setShowCollabForm] = useState(false);
+  const [suggestedCollaborators, setSuggestedCollaborators] = useState([]);
+  const [bookmarkBusy, setBookmarkBusy] = useState(false);
+  const [timelineItems, setTimelineItems] = useState([]);
+  const [creatingReceiptId, setCreatingReceiptId] = useState(null);
+  const [shareCard, setShareCard] = useState(null);
 
   const isOwner = user && project?.user_id === user.id;
 
   const fetchProjectData = useCallback(async () => {
     try {
       setLoading(true);
-      const [projectRes, updatesRes, milestonesRes, commentsRes, collabsRes, activityRes] = await Promise.all([
+      const [projectRes, updatesRes, milestonesRes, commentsRes, collabsRes, activityRes, timelineRes] = await Promise.all([
         projectsAPI.get(id),
         updatesAPI.list(id),
         milestonesAPI.list(id),
         commentsAPI.list(id),
         collaborationAPI.list(id),
         activityAPI.list(id),
+        projectsAPI.getTimeline(id),
       ]);
 
       setProject(projectRes.data);
@@ -78,6 +88,23 @@ export default function ProjectDetailPage() {
       setComments(commentsRes.data.items || []);
       setCollaborators(collabsRes.data.items || []);
       setActivityItems(activityRes.data.items || []);
+      setTimelineItems(timelineRes.data.items || []);
+      try {
+        const shareRes = await shareAPI.getProjectCard(id);
+        setShareCard(shareRes.data || null);
+      } catch (_err) {
+        setShareCard(null);
+      }
+      if (user && projectRes.data.user_id === user.id) {
+        try {
+          const suggestedRes = await projectsAPI.getSuggestedCollaborators(id, { limit: 6 });
+          setSuggestedCollaborators(suggestedRes.data || []);
+        } catch (_error) {
+          setSuggestedCollaborators([]);
+        }
+      } else {
+        setSuggestedCollaborators([]);
+      }
     } catch (error) {
       console.error('Error fetching project:', error);
       if (error.response?.status === 404) {
@@ -86,7 +113,7 @@ export default function ProjectDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id, navigate]);
+  }, [id, navigate, user]);
 
   useEffect(() => {
     fetchProjectData();
@@ -361,6 +388,26 @@ export default function ProjectDetailPage() {
   };
 
   const isLikelyId = (value) => typeof value === 'string' && /^[0-9a-f-]{16,}$/i.test(value);
+  const healthStatus = project?.health_status ? String(project.health_status).replace('_', ' ') : '';
+
+  const handleToggleBookmark = async () => {
+    if (!isAuthenticated || bookmarkBusy || !project) return;
+    setBookmarkBusy(true);
+    try {
+      const response = project.is_bookmarked
+        ? await bookmarksAPI.remove(project.id)
+        : await bookmarksAPI.add(project.id);
+      setProject((prev) => ({
+        ...prev,
+        is_bookmarked: Boolean(response.data.is_bookmarked),
+        bookmark_count: Number(response.data.bookmark_count || 0),
+      }));
+    } catch (error) {
+      console.error('Failed to update bookmark', error);
+    } finally {
+      setBookmarkBusy(false);
+    }
+  };
 
   const activityHeading = (item) => {
     if (item.type === 'commit') return 'Commit pushed';
@@ -380,6 +427,28 @@ export default function ProjectDetailPage() {
     if (['blocker', 'failed', 'dropped', 'disconnected', 'rejected'].includes(value)) return 'destructive';
     if (['active', 'milestone', 'learning', 'progress'].includes(value)) return 'secondary';
     return 'outline';
+  };
+
+  const handleCreateReceipt = async (collabId) => {
+    setCreatingReceiptId(collabId);
+    try {
+      await collaborationAPI.createReceipt(collabId, { role_title: 'Collaborator', summary: 'Completed collaboration.' });
+      await fetchProjectData();
+    } catch (error) {
+      console.error('Failed to create receipt', error);
+    } finally {
+      setCreatingReceiptId(null);
+    }
+  };
+
+  const handleShareProject = async () => {
+    const url = shareCard?.share_url || `${window.location.origin}/projects/${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      alert('Project link copied.');
+    } catch {
+      alert(url);
+    }
   };
 
   if (loading) {
@@ -423,6 +492,11 @@ export default function ProjectDetailPage() {
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-2">
                 <StageBadge stage={project.stage} />
+                {healthStatus ? (
+                  <Badge variant="outline" className="font-mono text-[10px] uppercase">
+                    {healthStatus}
+                  </Badge>
+                ) : null}
                 <span className="font-mono text-xs text-muted-foreground">
                   {formatDate(project.created_at)}
                 </span>
@@ -468,15 +542,25 @@ export default function ProjectDetailPage() {
 
               {/* Owner Info */}
               {project.user && (
-                <Link 
-                  to={`/user/${project.user.id}`}
-                  className="mt-4 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
-                    {project.user.name?.[0]?.toUpperCase() || project.user.email?.[0]?.toUpperCase()}
+                <div className="mt-4">
+                  <Link
+                    to={`/user/${project.user.id}`}
+                    className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
+                      {project.user.name?.[0]?.toUpperCase() || project.user.email?.[0]?.toUpperCase()}
+                    </div>
+                    {project.user.name || project.user.email?.split('@')[0]}
+                  </Link>
+                  <div className="mt-2">
+                    <TrustSignalsRow
+                      band={project.user.builder_score_band}
+                      completedProjects={project.user.completed_projects_count}
+                      receipts={project.user.receipts_count}
+                      lastActiveAt={project.user.last_active_at}
+                    />
                   </div>
-                  {project.user.name || project.user.email?.split('@')[0]}
-                </Link>
+                </div>
               )}
 
               {project.verification_status && (
@@ -529,6 +613,19 @@ export default function ProjectDetailPage() {
                     {isRefreshingRepo ? 'Refreshing...' : 'Refresh Repo'}
                   </button>
                 )}
+              </div>
+            )}
+            {!isOwner && isAuthenticated && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleToggleBookmark}
+                  disabled={bookmarkBusy}
+                  className="bg-secondary text-secondary-foreground px-4 py-2 rounded-md hover:bg-muted border border-border transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  {project.is_bookmarked ? 'Bookmarked' : 'Bookmark'}
+                  <Badge variant="outline" className="font-mono">{project.bookmark_count || 0}</Badge>
+                </button>
               </div>
             )}
           </div>
@@ -856,6 +953,11 @@ export default function ProjectDetailPage() {
               )}
             </div>
 
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <h3 className="font-semibold text-foreground mb-4">Build Timeline</h3>
+              <ProjectTimeline items={timelineItems} />
+            </div>
+
             {/* Comments Section */}
             <div className="bg-card border border-border rounded-xl shadow-card p-6">
               <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
@@ -947,6 +1049,22 @@ export default function ProjectDetailPage() {
                 )}
               </div>
             )}
+
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <h3 className="font-semibold text-foreground mb-3">Project Health</h3>
+              <Badge variant="outline" className="font-mono uppercase">{healthStatus || 'unknown'}</Badge>
+              <p className="text-sm text-muted-foreground mt-2">
+                Last activity: {project.last_activity_at ? formatDateTime(project.last_activity_at) : 'No activity yet'}
+              </p>
+            </div>
+
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-foreground">Share Project</h3>
+                <Button type="button" variant="outline" size="sm" onClick={handleShareProject}>Copy Link</Button>
+              </div>
+              <ProjectShareCard card={shareCard} />
+            </div>
 
             <div className="bg-card border border-border rounded-xl shadow-card p-6">
               <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
@@ -1091,11 +1209,39 @@ export default function ProjectDetailPage() {
                       <Badge variant={badgeVariantForStatus(collab.status)} className="font-mono">
                         {humanize(collab.status)}
                       </Badge>
+                      {isOwner && collab.status === 'accepted' ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCreateReceipt(collab.id)}
+                          disabled={creatingReceiptId === collab.id}
+                        >
+                          {creatingReceiptId === collab.id ? 'Generating...' : 'Generate Receipt'}
+                        </Button>
+                      ) : null}
                     </div>
                   ))}
                 </div>
               )}
             </div>
+
+            {isOwner && (
+              <div className="bg-card border border-border rounded-xl shadow-card p-6">
+                <h3 className="font-semibold text-foreground mb-4">Suggested Collaborators</h3>
+                {suggestedCollaborators.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No suggestions yet. Add roles needed to improve matching quality.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {suggestedCollaborators.map((candidate) => (
+                      <SuggestedCollaboratorCard key={candidate.user_id} candidate={candidate} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

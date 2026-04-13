@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { profileAPI } from '../lib/api';
+import { profileAPI, digestAPI, activationAPI } from '../lib/api';
 import { Loader2, Save, Github, User, Link as LinkIcon, Upload, Trash2, MapPin } from 'lucide-react';
 import Layout from '../components/Layout';
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,8 @@ export default function ProfilePage() {
     avatarUrl: '',
     skills: [],
   });
+  const [digestPrefs, setDigestPrefs] = useState({ enabled: true, frequency: 'weekly', channels: ['in_app'] });
+  const [activationChecklist, setActivationChecklist] = useState({ profile_items: [], owner_items: [], top_items: [] });
   const [initialForm, setInitialForm] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -50,6 +52,16 @@ export default function ProfilePage() {
         };
         setForm(nextForm);
         setInitialForm(nextForm);
+        try {
+          const digestRes = await digestAPI.getPreview();
+          if (digestRes?.data) {
+            setDigestPrefs((prev) => ({ ...prev, enabled: true }));
+          }
+        } catch (_err) {}
+        try {
+          const checklistRes = await activationAPI.getChecklist();
+          setActivationChecklist(checklistRes.data || { profile_items: [], owner_items: [], top_items: [] });
+        } catch (_err) {}
       } catch (error) {
         console.error('Error fetching profile:', error);
         setErrorMessage('Could not load your profile. Please refresh and try again.');
@@ -158,6 +170,7 @@ export default function ProfilePage() {
         portfolio_url: form.portfolioUrl || null,
         avatar_url: form.avatarUrl || null,
       });
+      await digestAPI.updatePreferences(digestPrefs);
       setInitialForm(form);
       setSuccessMessage('Profile updated successfully.');
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -171,19 +184,35 @@ export default function ProfilePage() {
 
   const previewAvatar = (!avatarLoadFailed && form.avatarUrl) || (!avatarLoadFailed && user?.picture);
   const avatarSrc = form.avatarUrl || user?.picture || '';
-  const profileCompleteness = Math.round(
-    (([
+  const completenessFields = useMemo(
+    () => [
       form.displayName,
       form.username,
       form.headline,
+      form.location,
       form.bio,
       form.githubUrl,
       form.linkedinUrl,
       form.portfolioUrl,
       form.skills.length ? 'has-skills' : '',
-    ].filter(Boolean).length /
-      8) *
-      100)
+      form.avatarUrl || user?.picture ? 'has-avatar' : '',
+    ],
+    [
+      form.displayName,
+      form.username,
+      form.headline,
+      form.location,
+      form.bio,
+      form.githubUrl,
+      form.linkedinUrl,
+      form.portfolioUrl,
+      form.skills.length,
+      form.avatarUrl,
+      user?.picture,
+    ]
+  );
+  const profileCompleteness = Math.round(
+    (completenessFields.filter(Boolean).length / completenessFields.length) * 100
   );
 
   if (loading) {
@@ -207,28 +236,57 @@ export default function ProfilePage() {
           <p className="text-muted-foreground mt-1">Build your public developer identity</p>
         </div>
 
+        {activationChecklist.profile_items?.length > 0 && (
+          <div className="bg-card border border-border rounded-xl shadow-card p-4 mb-6">
+            <h3 className="font-semibold text-foreground mb-2">Activation Nudges</h3>
+            <ul className="space-y-2 text-sm">
+              {activationChecklist.profile_items.slice(0, 2).map((item) => (
+                <li key={item.id} className="text-muted-foreground">
+                  <span className="text-foreground font-medium">{item.title}:</span> {item.description}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="bg-card border border-border rounded-xl shadow-card p-6 mb-8">
-          <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4 min-w-0">
               {previewAvatar ? (
                 <img
                   src={avatarSrc}
                   alt={form.displayName || user?.name || ''}
-                  className="w-16 h-16 rounded-full ring-2 ring-border object-cover"
+                  className="w-16 h-16 shrink-0 rounded-full ring-2 ring-border object-cover"
                   onError={() => setAvatarLoadFailed(true)}
                 />
               ) : (
-                <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center text-xl font-bold text-foreground">
+                <div className="w-16 h-16 shrink-0 bg-muted rounded-full flex items-center justify-center text-xl font-bold text-foreground">
                   {(form.displayName || user?.name || user?.email || 'U')[0].toUpperCase()}
                 </div>
               )}
-              <div>
-                <h2 className="text-xl font-semibold text-foreground">{form.displayName || user?.name || 'Developer'}</h2>
-                <p className="text-muted-foreground">{user?.email}</p>
+              <div className="min-w-0">
+                <h2 className="text-xl font-semibold text-foreground truncate">{form.displayName || user?.name || 'Developer'}</h2>
+                <p className="text-muted-foreground truncate">{user?.email}</p>
               </div>
             </div>
-            <div className="text-sm text-muted-foreground">
-              Profile completeness: <span className="text-foreground font-semibold">{profileCompleteness}%</span>
+            <div className="w-full sm:w-56 shrink-0 space-y-2">
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className="text-muted-foreground">Profile completeness</span>
+                <span className="text-foreground font-semibold tabular-nums">{profileCompleteness}%</span>
+              </div>
+              <div
+                className="h-2 rounded-full bg-muted overflow-hidden border border-border"
+                role="progressbar"
+                aria-valuenow={profileCompleteness}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="Profile completeness"
+              >
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+                  style={{ width: `${profileCompleteness}%` }}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -246,14 +304,15 @@ export default function ProfilePage() {
         )}
 
         {isDirty && (
-          <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-amber-300 text-sm">
-            You have unsaved changes.
+          <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            You have unsaved changes. On your phone, use the save bar at the bottom; on larger screens, use Save below.
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <section className="bg-card border border-border rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-foreground mb-4">Profile Information</h3>
+        <form id="profile-edit-form" onSubmit={handleSubmit} className="space-y-6">
+          <section className="bg-card border border-border rounded-xl shadow-card p-6">
+            <h3 className="text-base font-semibold text-muted-foreground uppercase tracking-wide mb-1">Profile</h3>
+            <p className="text-lg font-semibold text-foreground mb-4">Basic information</p>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1.5">Avatar</label>
@@ -319,17 +378,20 @@ export default function ProfilePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">
-                    <MapPin className="w-4 h-4 inline mr-1" />
-                    Location
-                  </label>
-                  <input
-                    type="text"
-                    value={form.location}
-                    onChange={(e) => setField('location', e.target.value)}
-                    placeholder="City, Country"
-                    className={fieldClass}
-                  />
+                  <label className="block text-sm font-medium text-foreground mb-1.5">Location</label>
+                  <div className="relative">
+                    <MapPin
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden
+                    />
+                    <input
+                      type="text"
+                      value={form.location}
+                      onChange={(e) => setField('location', e.target.value)}
+                      placeholder="City, Country"
+                      className={`${fieldClass} pl-10`}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -347,8 +409,27 @@ export default function ProfilePage() {
             </div>
           </section>
 
-          <section className="bg-card border border-border rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-foreground mb-4">Links</h3>
+          <section className="bg-card border border-border rounded-xl shadow-card p-6">
+            <h3 className="text-base font-semibold text-muted-foreground uppercase tracking-wide mb-1">Digest</h3>
+            <p className="text-lg font-semibold text-foreground mb-4">Weekly builder digest preferences</p>
+            <div className="space-y-3 text-sm">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={digestPrefs.enabled} onChange={(e) => setDigestPrefs((p) => ({ ...p, enabled: e.target.checked }))} />
+                Enable digest
+              </label>
+              <div>
+                <label className="block mb-1">Frequency</label>
+                <select className={fieldClass} value={digestPrefs.frequency} onChange={(e) => setDigestPrefs((p) => ({ ...p, frequency: e.target.value }))}>
+                  <option value="weekly">Weekly</option>
+                  <option value="biweekly">Bi-weekly</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-card border border-border rounded-xl shadow-card p-6">
+            <h3 className="text-base font-semibold text-muted-foreground uppercase tracking-wide mb-1">Links</h3>
+            <p className="text-lg font-semibold text-foreground mb-4">Social & portfolio</p>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1.5">
@@ -393,8 +474,9 @@ export default function ProfilePage() {
             </div>
           </section>
 
-          <section className="bg-card border border-border rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-foreground mb-4">Skills</h3>
+          <section className="bg-card border border-border rounded-xl shadow-card p-6">
+            <h3 className="text-base font-semibold text-muted-foreground uppercase tracking-wide mb-1">Skills</h3>
+            <p className="text-lg font-semibold text-foreground mb-4">Technologies you work with</p>
             <div className="border border-input rounded-md px-3 py-2 flex flex-wrap gap-2 items-center">
               {form.skills.map((skill) => (
                 <span key={skill} className="inline-flex items-center gap-2 bg-muted text-foreground text-sm px-2 py-1 rounded-full">
@@ -421,8 +503,9 @@ export default function ProfilePage() {
             </div>
           </section>
 
-          <section className="bg-card border border-border rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-foreground mb-4">Public Profile Preview</h3>
+          <section className="bg-card border border-border rounded-xl shadow-card p-6">
+            <h3 className="text-base font-semibold text-muted-foreground uppercase tracking-wide mb-1">Preview</h3>
+            <p className="text-lg font-semibold text-foreground mb-4">How others see your profile</p>
             <div className="rounded-lg border border-border p-4 bg-background/40">
               <div className="flex items-center gap-3 mb-3">
                 {previewAvatar ? (
@@ -447,13 +530,35 @@ export default function ProfilePage() {
             </div>
           </section>
 
-          <div className="flex items-center gap-4">
+          <div className={`flex items-center gap-4 ${isDirty ? 'pb-24 sm:pb-6' : 'pb-6'}`}>
             <Button type="submit" disabled={saving || !isDirty} data-testid="save-profile-btn">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               Save Changes
             </Button>
           </div>
         </form>
+
+        {isDirty && (
+          <div
+            className="fixed bottom-0 left-0 right-0 z-40 border-t border-border bg-background/95 backdrop-blur-md px-4 py-3 shadow-[0_-4px_24px_rgba(15,23,42,0.08)] sm:hidden"
+            role="region"
+            aria-label="Save profile"
+          >
+            <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground truncate">Unsaved changes</p>
+              <Button
+                type="submit"
+                form="profile-edit-form"
+                disabled={saving || !isDirty}
+                className="shrink-0"
+                data-testid="save-profile-sticky-btn"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </Layout>
   );

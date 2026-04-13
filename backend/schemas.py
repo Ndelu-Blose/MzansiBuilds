@@ -80,6 +80,11 @@ class UserResponse(BaseModel):
     role: str
     auth_provider: str
     picture: Optional[str] = None
+    builder_score: Optional[int] = None
+    builder_score_band: Optional[str] = None
+    completed_projects_count: Optional[int] = 0
+    receipts_count: Optional[int] = 0
+    last_active_at: Optional[datetime] = None
     created_at: datetime
 
 
@@ -124,6 +129,11 @@ class ProfileResponse(BaseModel):
     linkedin_url: Optional[str] = None
     portfolio_url: Optional[str] = None
     avatar_url: Optional[str] = None
+    builder_score: Optional[int] = None
+    builder_score_band: Optional[str] = None
+    completed_projects_count: Optional[int] = 0
+    receipts_count: Optional[int] = 0
+    last_active_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -166,6 +176,189 @@ class ProjectResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     import_provenance: Optional[Dict[str, Any]] = None
+    bookmark_count: int = 0
+    is_bookmarked: bool = False
+    health_status: Optional[str] = None
+    last_activity_at: Optional[datetime] = None
+
+
+class ProjectBookmarkResponse(BaseModel):
+    project: ProjectResponse
+    created_at: datetime
+
+
+class ProjectBookmarkListResponse(BaseModel):
+    items: List[ProjectBookmarkResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class MatchedProjectResponse(ProjectResponse):
+    match_score: int = 0
+    matched_skills: List[str] = Field(default_factory=list)
+    roles_needed: List[str] = Field(default_factory=list)
+
+
+class MatchedProjectListResponse(BaseModel):
+    items: List[MatchedProjectResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class SuggestedCollaboratorResponse(BaseModel):
+    user_id: str
+    name: Optional[str] = None
+    username: Optional[str] = None
+    headline: Optional[str] = None
+    skills: List[str] = Field(default_factory=list)
+    match_score: int = 0
+    matched_skills: List[str] = Field(default_factory=list)
+    builder_score: Optional[int] = None
+    builder_score_band: Optional[str] = None
+    completed_projects_count: Optional[int] = 0
+    receipts_count: Optional[int] = 0
+    last_active_at: Optional[datetime] = None
+
+
+class ProjectTimelineEventResponse(BaseModel):
+    id: str
+    type: str
+    label: str
+    timestamp: Optional[datetime] = None
+    actor: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectTimelineResponse(BaseModel):
+    items: List[ProjectTimelineEventResponse]
+
+
+class BuilderScoreBreakdown(BaseModel):
+    profile_complete: int = 0
+    completed_projects: int = 0
+    active_projects: int = 0
+    milestones: int = 0
+    recent_activity: int = 0
+    collaboration_quality: int = 0
+    stale_penalty: int = 0
+
+
+class BuilderScoreResponse(BaseModel):
+    score: int
+    band: str
+    breakdown: BuilderScoreBreakdown
+
+
+class CollaborationReceiptCreate(BaseModel):
+    role_title: Optional[str] = None
+    summary: Optional[str] = None
+
+
+class CollaborationReceiptResponse(BaseModel):
+    id: str
+    project_id: str
+    collaboration_id: Optional[str] = None
+    owner_user_id: str
+    collaborator_user_id: str
+    role_title: Optional[str] = None
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    summary: Optional[str] = None
+    owner_acknowledged: bool
+    collaborator_acknowledged: bool
+    created_at: datetime
+    project_title: Optional[str] = None
+
+
+class CollaborationReceiptListResponse(BaseModel):
+    items: List[CollaborationReceiptResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class OpenRoleItemResponse(ProjectResponse):
+    roles_needed: List[str] = Field(default_factory=list)
+    owner_score_band: Optional[str] = None
+    owner_score: Optional[int] = None
+
+
+class OpenRoleListResponse(BaseModel):
+    items: List[OpenRoleItemResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class TrendingProjectItemResponse(ProjectResponse):
+    momentum_score: int = 0
+
+
+class TrendingBuilderItemResponse(BaseModel):
+    user: UserResponse
+    momentum_score: int = 0
+
+
+class DigestPreferenceUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    frequency: Optional[str] = None
+    channels: Optional[List[str]] = None
+
+
+class WeeklyDigestPreviewResponse(BaseModel):
+    active_projects: List[ProjectResponse]
+    open_roles: List[OpenRoleItemResponse]
+    trending_builders: List[TrendingBuilderItemResponse]
+    milestone_highlights: List[Dict[str, Any]]
+
+
+class ActivationChecklistItemResponse(BaseModel):
+    id: str
+    title: str
+    description: str
+    action_path: Optional[str] = None
+    priority: int = 0
+    category: str
+
+
+class ActivationChecklistResponse(BaseModel):
+    profile_items: List[ActivationChecklistItemResponse]
+    owner_items: List[ActivationChecklistItemResponse]
+    top_items: List[ActivationChecklistItemResponse]
+
+
+class DashboardActivationStateResponse(BaseModel):
+    has_projects: bool
+    has_matches: bool
+    has_activity: bool
+    skills_count: int = 0
+    first_match_count: int = 0
+
+
+class ProjectShareCardResponse(BaseModel):
+    project_id: str
+    title: str
+    stage: Optional[ProjectStageEnum] = None
+    health_status: Optional[str] = None
+    roles_needed: List[str] = Field(default_factory=list)
+    owner_name: Optional[str] = None
+    owner_score_band: Optional[str] = None
+    last_activity_at: Optional[datetime] = None
+    share_url: str
+
+
+class ProfileShareCardResponse(BaseModel):
+    user_id: str
+    name: Optional[str] = None
+    username: Optional[str] = None
+    headline: Optional[str] = None
+    top_skills: List[str] = Field(default_factory=list)
+    builder_score_band: Optional[str] = None
+    completed_projects_count: int = 0
+    receipts_count: int = 0
+    share_url: str
 
 
 class GitHubConnectStartResponse(BaseModel):

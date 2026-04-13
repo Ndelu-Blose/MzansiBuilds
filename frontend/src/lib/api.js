@@ -69,7 +69,16 @@ export const projectsAPI = {
   complete: (id) => api.patch(`/projects/${id}/complete`),
   delete: (id) => api.delete(`/projects/${id}`),
   refresh: (id) => api.post(`/projects/${id}/refresh`),
-  getMyProjects: (params = {}) => api.get('/my/projects', { params })
+  getMyProjects: (params = {}) => api.get('/my/projects', { params }),
+  getMatched: (params = {}) => api.get('/projects/matched', { params }),
+  getSuggestedCollaborators: (projectId, params = {}) => api.get(`/projects/${projectId}/suggested-collaborators`, { params }),
+  getTimeline: (projectId) => api.get(`/projects/${projectId}/timeline`),
+};
+
+export const bookmarksAPI = {
+  add: (projectId) => api.post(`/projects/${projectId}/bookmark`),
+  remove: (projectId) => api.delete(`/projects/${projectId}/bookmark`),
+  list: (params = {}) => api.get('/my/bookmarks', { params }),
 };
 
 export const githubAPI = {
@@ -118,7 +127,35 @@ export const collaborationAPI = {
   request: (projectId, data) => api.post(`/projects/${projectId}/collaborate`, data),
   list: (projectId) => api.get(`/projects/${projectId}/collaborators`),
   update: (collabId, data) => api.patch(`/collaborations/${collabId}`, data),
-  getMyRequests: () => api.get('/my/collaboration-requests')
+  getMyRequests: () => api.get('/my/collaboration-requests'),
+  createReceipt: (collabId, payload) => api.post(`/collaborations/${collabId}/receipt`, payload),
+};
+
+export const usersAPI = {
+  getBuilderScore: (userId) => api.get(`/users/${userId}/builder-score`),
+  getReceipts: (userId, params = {}) => api.get(`/users/${userId}/receipts`, { params }),
+};
+
+export const discoveryAPI = {
+  getOpenRoles: (params = {}) => api.get('/open-roles', { params }),
+  getTrendingProjects: (params = {}) => api.get('/trending/projects', { params }),
+  getTrendingBuilders: (params = {}) => api.get('/trending/builders', { params }),
+};
+
+export const digestAPI = {
+  getPreview: () => api.get('/digest/preview'),
+  updatePreferences: (payload) => api.put('/digest/preferences', payload),
+};
+
+export const activationAPI = {
+  getChecklist: () => api.get('/activation/checklist'),
+  getDashboardState: () => api.get('/dashboard/activation-state'),
+  trackEvent: (payload) => api.post('/activation/events', payload),
+};
+
+export const shareAPI = {
+  getProjectCard: (id) => api.get(`/projects/${id}/share-card`),
+  getProfileCard: (id) => api.get(`/users/${id}/share-card`),
 };
 
 // Profile API

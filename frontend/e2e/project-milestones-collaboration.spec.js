@@ -1,7 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
 /** Matches production build `REACT_APP_BACKEND_URL` (see frontend/.env.local). */
-const BACKEND = process.env.E2E_BACKEND_ORIGIN || 'http://localhost:8001';
+const BACKEND = process.env.E2E_BACKEND_ORIGIN || 'http://localhost:8000';
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000099';
 const OWNER_ID = '00000000-0000-4000-8000-000000000001';
@@ -160,6 +160,40 @@ async function installBackendMock(page, { actingUserId, projectOverrides } = {})
       await json({ items });
       return;
     }
+    if (method === 'GET' && path === '/api/my/bookmarks') {
+      await json({ items: [], total: 0, limit: 5, offset: 0 });
+      return;
+    }
+    if (method === 'GET' && path === '/api/projects/matched') {
+      await json({ items: [], total: 0, limit: 5, offset: 0 });
+      return;
+    }
+    if (method === 'GET' && path === '/api/trending/projects') {
+      await json({ items: [] });
+      return;
+    }
+    if (method === 'GET' && path === '/api/trending/builders') {
+      await json({ items: [] });
+      return;
+    }
+    if (method === 'GET' && path === '/api/digest/preview') {
+      await json({ active_projects: [], open_roles: [], trending_builders: [], milestone_highlights: [] });
+      return;
+    }
+    if (method === 'GET' && path === '/api/activation/checklist') {
+      await json({ profile_items: [], owner_items: [], top_items: [] });
+      return;
+    }
+    if (method === 'GET' && path === '/api/dashboard/activation-state') {
+      await json({
+        has_projects: actingUserId !== VISITOR_ID,
+        has_matches: false,
+        has_activity: false,
+        skills_count: actingUserId === VISITOR_ID ? 1 : 0,
+        first_match_count: 0,
+      });
+      return;
+    }
 
     if (method === 'GET' && path === '/api/projects') {
       await json({
@@ -259,6 +293,24 @@ async function installBackendMock(page, { actingUserId, projectOverrides } = {})
       await json({ items: [] });
       return;
     }
+    if (method === 'GET' && path === `/api/projects/${PROJECT_ID}/timeline`) {
+      await json({ items: [] });
+      return;
+    }
+    if (method === 'GET' && path === `/api/projects/${PROJECT_ID}/share-card`) {
+      await json({
+        project_id: PROJECT_ID,
+        title: 'E2E project',
+        stage: 'in_progress',
+        health_status: 'active',
+        roles_needed: [],
+        owner_name: 'Owner User',
+        owner_score_band: 'Active Builder',
+        last_activity_at: iso(),
+        share_url: `http://127.0.0.1:4173/projects/${PROJECT_ID}`,
+      });
+      return;
+    }
 
     if (method === 'GET' && path === `/api/projects/${PROJECT_ID}/comments`) {
       await json({ items: [] });
@@ -324,7 +376,7 @@ test.describe('Project milestones and collaboration', () => {
     await expect(page.getByTestId('dashboard')).toBeVisible({ timeout: 15000 });
     await page.getByTestId('project-card').filter({ hasText: 'E2E project' }).click();
     await expect(page.getByTestId('project-detail')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByRole('heading', { name: 'E2E project' })).toBeVisible();
+    await expect(page.locator('h1', { hasText: 'E2E project' })).toBeVisible();
 
     await page.getByTestId('milestone-input').fill('Ship milestones UI');
     await page.getByTestId('add-milestone-btn').click();

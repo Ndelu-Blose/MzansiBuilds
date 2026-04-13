@@ -58,6 +58,10 @@ MzansiBuilds is a full-stack web platform that enables South African developers 
 - Activity feed showing recent project updates
 - Celebration wall for completed projects
 
+### Integrations & awareness (shipped beyond original MVP scope)
+- Optional **GitHub** account linking and **import project from repository**; repo-backed sync for metadata shown on project pages
+- **In-app notifications** for collaboration, comments, milestones, and project updates (REST-backed; not real-time push)
+
 ## What's Been Implemented
 
 ### MVP (April 2, 2026)
@@ -71,8 +75,7 @@ MzansiBuilds is a full-stack web platform that enables South African developers 
 ✅ Collaboration requests
 ✅ Activity feed
 ✅ Celebration wall
-✅ Modern dark theme UI
-✅ Responsive design
+✅ Light theme UI (Tailwind + CSS variables), responsive layout
 ✅ Admin seeding
 
 ### Layer 1 & 2 Enhancements (April 2, 2026)
@@ -93,6 +96,21 @@ MzansiBuilds is a full-stack web platform that enables South African developers 
 ✅ **Comment Notification Email**: Notifies project owner of new comments
 ✅ **Project Completion Email**: Congratulates user when project ships
 ✅ **Dual Auth Support**: Legacy JWT + Supabase JWT verification
+
+### GitHub integration (April 2026)
+✅ **Connect GitHub** (OAuth): link account, list repositories, preview languages/README
+✅ **Import from GitHub**: create repo-backed projects from a selected repository
+✅ **Repo sync**: contributors, languages, README preview, recent commits (for connected private/public repos as permitted by token)
+✅ **Import provenance**: metadata on imported projects (e.g. source repo, flags) where enabled
+
+### In-app notifications (April 2026)
+✅ **Notification list & read state**: REST API for user notifications (collaboration, comments, milestones, updates)
+✅ **Header / dashboard preview**: surface recent unread items in the UI
+
+### Product polish & reliability (April 2026)
+✅ **Dashboard resilience**: projects, stats, and collaboration requests load even if the notifications request fails; notification area fails with a clear empty state
+✅ **Project cards (discovery)**: owner profile image when available (else initials / neutral fallback); owner row links to public profile
+✅ **Mobile browser chrome**: `theme-color` / `color-scheme` aligned with the light UI so address bar and related surfaces are not stuck on legacy black
 
 ## API Endpoints
 ### Auth
@@ -138,6 +156,18 @@ MzansiBuilds is a full-stack web platform that enables South African developers 
 - GET /api/feed
 - GET /api/celebration
 
+### Notifications
+- GET /api/notifications
+- PATCH /api/notifications/{notification_id}/read
+
+### GitHub (integrations)
+- POST /api/integrations/github/connect/start
+- GET /api/integrations/github/callback
+- GET /api/integrations/github/account
+- DELETE /api/integrations/github/account
+- GET /api/integrations/github/repos (+ repo-scoped preview routes)
+- POST /api/projects/import/github
+
 ## Prioritized Backlog
 ### P0 (Critical) - Done
 - ✅ Authentication system
@@ -148,21 +178,21 @@ MzansiBuilds is a full-stack web platform that enables South African developers 
 - ✅ User profiles with stats
 
 ### P1 (Important) - Future
-- Real-time notifications (WebSockets)
+- Real-time / push notifications (e.g. WebSockets or web push) on top of existing in-app notifications
 - Follow system (follow developers)
 - Smart feed sorting (trending algorithm)
 - Project templates
 
 ### P2 (Nice to have) - Future
-- GitHub integration (sync repos/commits)
+- GitHub OAuth scope UX (e.g. fine-grained or GitHub App) to limit access to explicitly chosen repos
 - Project analytics/insights
 - Export project data
-- Dark/light theme toggle
-- Email notifications
+- Optional dark/light theme toggle (product is light-first today)
+- Notification digest emails (beyond transactional Resend flows already shipped)
 
 ## Next Tasks
-1. Add real-time notifications using WebSockets
+1. Optional: live notification delivery (WebSockets / push) without changing core REST notification model
 2. Implement follow system for developers
 3. Add trending/personalized feed algorithm
 4. Create project templates (Web App, API, Mobile)
-5. GitHub integration for auto-syncing commits
+5. Harden GitHub permissions story for non-technical users (copy + optional narrower scopes)

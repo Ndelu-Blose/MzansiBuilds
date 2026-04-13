@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
-import { projectsAPI, collaborationAPI, notificationsAPI } from '../lib/api';
+import { projectsAPI, collaborationAPI, notificationsAPI, bookmarksAPI, discoveryAPI, digestAPI, activationAPI } from '../lib/api';
 import {
   Plus,
   FolderKanban,
@@ -42,6 +42,20 @@ export default function DashboardPage() {
   });
   const [notifPreview, setNotifPreview] = useState([]);
   const [notifUnread, setNotifUnread] = useState(0);
+  const [notifLoadError, setNotifLoadError] = useState(false);
+  const [savedProjects, setSavedProjects] = useState([]);
+  const [matchedProjects, setMatchedProjects] = useState([]);
+  const [trendingProjects, setTrendingProjects] = useState([]);
+  const [trendingBuilders, setTrendingBuilders] = useState([]);
+  const [digestPreview, setDigestPreview] = useState(null);
+  const [activationChecklist, setActivationChecklist] = useState({ profile_items: [], owner_items: [], top_items: [] });
+  const [activationState, setActivationState] = useState({
+    has_projects: false,
+    has_matches: false,
+    has_activity: false,
+    skills_count: 0,
+    first_match_count: 0,
+  });
 
   useEffect(() => {
     fetchData();
@@ -49,10 +63,16 @@ export default function DashboardPage() {
 
   const fetchData = async () => {
     try {
-      const [projectsRes, collabsRes, notifRes] = await Promise.all([
+      const [projectsRes, collabsRes, savedRes, matchedRes, trendingProjectsRes, trendingBuildersRes, digestRes, checklistRes, activationStateRes] = await Promise.all([
         projectsAPI.getMyProjects(),
         collaborationAPI.getMyRequests(),
-        notificationsAPI.list({ limit: 6, offset: 0 }),
+        bookmarksAPI.list({ limit: 5, offset: 0 }),
+        projectsAPI.getMatched({ limit: 5, offset: 0 }),
+        discoveryAPI.getTrendingProjects({ limit: 5 }),
+        discoveryAPI.getTrendingBuilders({ limit: 5 }),
+        digestAPI.getPreview(),
+        activationAPI.getChecklist(),
+        activationAPI.getDashboardState(),
       ]);
 
       const projectList = projectsRes.data.items || [];
@@ -60,21 +80,41 @@ export default function DashboardPage() {
 
       const collabList = collabsRes.data.items || [];
       setCollabRequests(collabList.filter(c => c.status === 'pending'));
+      setSavedProjects((savedRes.data.items || []).map((item) => item.project).filter(Boolean));
+      setMatchedProjects(matchedRes.data.items || []);
+      setTrendingProjects(trendingProjectsRes.data.items || []);
+      setTrendingBuilders(trendingBuildersRes.data.items || []);
+      setDigestPreview(digestRes.data || null);
+      setActivationChecklist(checklistRes.data || { profile_items: [], owner_items: [], top_items: [] });
+      setActivationState(activationStateRes.data || {
+        has_projects: false,
+        has_matches: false,
+        has_activity: false,
+        skills_count: 0,
+        first_match_count: 0,
+      });
 
-      setNotifPreview(notifRes.data.items || []);
-      setNotifUnread(typeof notifRes.data.unread_count === 'number' ? notifRes.data.unread_count : 0);
-
-      // Calculate stats
       setStats({
         total: projectList.length,
         completed: projectList.filter(p => p.stage === 'completed').length,
         inProgress: projectList.filter(p => p.stage === 'in_progress').length,
-        pendingCollabs: collabList.filter(c => c.status === 'pending').length
+        pendingCollabs: collabList.filter(c => c.status === 'pending').length,
       });
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('Error fetching dashboard data:', error);
     } finally {
       setLoading(false);
+    }
+
+    try {
+      setNotifLoadError(false);
+      const notifRes = await notificationsAPI.list({ limit: 6, offset: 0 });
+      setNotifPreview(notifRes.data.items || []);
+      setNotifUnread(typeof notifRes.data.unread_count === 'number' ? notifRes.data.unread_count : 0);
+    } catch (_err) {
+      setNotifPreview([]);
+      setNotifUnread(0);
+      setNotifLoadError(true);
     }
   };
 
@@ -148,6 +188,16 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {activationState.first_match_count > 0 && (
+          <div className="mb-6 rounded-xl border border-primary/30 bg-primary/10 p-4">
+            <p className="text-sm text-foreground">
+              <span className="font-semibold">{activationState.first_match_count} projects</span> need your skills right now.
+              {' '}
+              <Link to="/explore" className="text-primary hover:underline">Explore matches</Link>
+            </p>
+          </div>
+        )}
+
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Projects Section */}
@@ -169,9 +219,13 @@ export default function DashboardPage() {
                   <Plus className="w-4 h-4" />
                   Import from GitHub
                 </Button>
+                {activationState.skills_count === 0 && (
+                  <p className="mt-3 text-xs text-muted-foreground">Add skills in your profile to unlock matching.</p>
+                )}
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-8">
+                <div className="space-y-4">
                 {projects.slice(0, 5).map(project => (
                   <ProjectCard key={project.id} project={project} showOwner={false} />
                 ))}
@@ -183,6 +237,39 @@ export default function DashboardPage() {
                     View all {projects.length} projects
                   </Link>
                 )}
+                </div>
+
+                <div>
+                  <h2 className="text-xl font-semibold text-foreground mb-4">Matched for You</h2>
+                  {matchedProjects.length === 0 ? (
+                    <div className="bg-card border border-border rounded-xl shadow-card p-6 text-sm text-muted-foreground">
+                      {activationState.skills_count === 0
+                        ? 'Add skills to your profile and we will surface projects seeking those skills.'
+                        : 'No matches yet. Try exploring Open Roles or check back after new projects are posted.'}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {matchedProjects.map((project) => (
+                        <ProjectCard key={`matched-${project.id}`} project={project} showOwner={true} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <h2 className="text-xl font-semibold text-foreground mb-4">Saved Projects</h2>
+                  {savedProjects.length === 0 ? (
+                    <div className="bg-card border border-border rounded-xl shadow-card p-6 text-sm text-muted-foreground">
+                      Bookmark interesting projects to keep a quick watchlist here.
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {savedProjects.map((project) => (
+                        <ProjectCard key={`saved-${project.id}`} project={project} showOwner={true} />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -204,7 +291,14 @@ export default function DashboardPage() {
                   </span>
                 ) : null}
               </div>
-              {notifPreview.length === 0 ? (
+              {notifLoadError ? (
+                <p
+                  className="text-muted-foreground text-sm leading-relaxed"
+                  data-testid="dashboard-notifications-unavailable"
+                >
+                  Notifications unavailable right now.
+                </p>
+              ) : notifPreview.length === 0 ? (
                 <p className="text-muted-foreground text-sm leading-relaxed">
                   You are all caught up. Comments, collaboration requests, and project alerts also arrive by email when
                   your account has a verified address and email is configured.
@@ -233,9 +327,11 @@ export default function DashboardPage() {
                   ))}
                 </ul>
               )}
-              <p className="text-xs text-muted-foreground mt-4 leading-relaxed">
-                Use the bell in the header for the full list and to mark items as read.
-              </p>
+              {!notifLoadError ? (
+                <p className="text-xs text-muted-foreground mt-4 leading-relaxed">
+                  Use the bell in the header for the full list and to mark items as read.
+                </p>
+              ) : null}
             </div>
 
             {/* Collaboration Requests */}
@@ -276,6 +372,22 @@ export default function DashboardPage() {
             <div className="bg-card border border-border rounded-xl shadow-card p-6">
               <h3 className="font-semibold text-foreground mb-4">Quick Actions</h3>
               <div className="space-y-1">
+                <NavLink
+                  to="/open-roles"
+                  className={({ isActive }) =>
+                    `flex items-center justify-between rounded-md px-3 py-2.5 text-sm transition-colors border-l-4 ${
+                      isActive
+                        ? 'bg-accent text-foreground border-primary'
+                        : 'text-muted-foreground border-transparent hover:bg-muted hover:text-foreground'
+                    }`
+                  }
+                >
+                  <span className="flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    Open Roles Board
+                  </span>
+                  <ChevronRight className="w-4 h-4 shrink-0" />
+                </NavLink>
                 <NavLink
                   to="/feed"
                   className={({ isActive }) =>
@@ -328,6 +440,50 @@ export default function DashboardPage() {
                   <ChevronRight className="w-4 h-4 shrink-0" />
                 </NavLink>
               </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <h3 className="font-semibold text-foreground mb-3">Owner Activation</h3>
+              {activationChecklist.owner_items?.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Owner setup looks healthy.</p>
+              ) : (
+                <ul className="space-y-2 text-sm text-muted-foreground mb-4">
+                  {activationChecklist.owner_items.slice(0, 2).map((item) => (
+                    <li key={item.id}><span className="text-foreground font-medium">{item.title}:</span> {item.description}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <h3 className="font-semibold text-foreground mb-3">Trending Projects</h3>
+              {trendingProjects.length === 0 ? <p className="text-sm text-muted-foreground">No momentum yet.</p> : (
+                <ul className="space-y-2 text-sm">
+                  {trendingProjects.slice(0, 3).map((p) => (
+                    <li key={p.id}><Link to={`/projects/${p.id}`} className="hover:text-primary">{p.title}</Link></li>
+                  ))}
+                </ul>
+              )}
+              <h3 className="font-semibold text-foreground mt-5 mb-3">Momentum Builders</h3>
+              {trendingBuilders.length === 0 ? <p className="text-sm text-muted-foreground">No builder momentum yet.</p> : (
+                <ul className="space-y-2 text-sm">
+                  {trendingBuilders.slice(0, 3).map((b) => (
+                    <li key={b.user?.id || b.momentum_score}>{b.user?.name || b.user?.email || 'Builder'} - {b.momentum_score}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <h3 className="font-semibold text-foreground mb-3">Weekly Digest Preview</h3>
+              {!digestPreview ? <p className="text-sm text-muted-foreground">Preview unavailable.</p> : (
+                <div className="text-sm text-muted-foreground space-y-1">
+                  <p>Active projects: {(digestPreview.active_projects || []).length}</p>
+                  <p>Open roles: {(digestPreview.open_roles || []).length}</p>
+                  <p>Trending builders: {(digestPreview.trending_builders || []).length}</p>
+                  <p>Milestones: {(digestPreview.milestone_highlights || []).length}</p>
+                </div>
+              )}
             </div>
           </div>
         </div>

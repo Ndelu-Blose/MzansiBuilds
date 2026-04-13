@@ -1,19 +1,38 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { profileAPI } from '../lib/api';
+import { profileAPI, shareAPI, usersAPI } from '../lib/api';
 import { Loader2, Github, Code, Trophy, Zap, ExternalLink, FolderKanban, Calendar, MapPin, Linkedin, Globe } from 'lucide-react';
 import Layout from '../components/Layout';
 import ProjectCard from '../components/ProjectCard';
+import BuilderScoreCard from '../components/profile/BuilderScoreCard';
+import TrustSignalsRow from '../components/profile/TrustSignalsRow';
+import CollaborationReceiptCard from '../components/profile/CollaborationReceiptCard';
+import ProfileShareCard from '../components/profile/ProfileShareCard';
 
 export default function UserProfilePage() {
   const { id } = useParams();
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [builderScore, setBuilderScore] = useState(null);
+  const [receipts, setReceipts] = useState([]);
+  const [shareCard, setShareCard] = useState(null);
 
   const fetchUserProfile = useCallback(async () => {
     try {
-      const response = await profileAPI.getUser(id);
-      setUserData(response.data);
+      const [profileRes, scoreRes, receiptsRes] = await Promise.all([
+        profileAPI.getUser(id),
+        usersAPI.getBuilderScore(id),
+        usersAPI.getReceipts(id, { limit: 6, offset: 0 }),
+      ]);
+      setUserData(profileRes.data);
+      setBuilderScore(scoreRes.data);
+      setReceipts(receiptsRes.data.items || []);
+      try {
+        const shareRes = await shareAPI.getProfileCard(id);
+        setShareCard(shareRes.data || null);
+      } catch (_err) {
+        setShareCard(null);
+      }
     } catch (error) {
       console.error('Error fetching user profile:', error);
     } finally {
@@ -30,6 +49,16 @@ export default function UserProfilePage() {
       month: 'long',
       year: 'numeric',
     });
+  };
+
+  const handleShareProfile = async () => {
+    const url = shareCard?.share_url || `${window.location.origin}/user/${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      alert('Profile link copied.');
+    } catch {
+      alert(url);
+    }
   };
 
   if (loading) {
@@ -137,9 +166,31 @@ export default function UserProfilePage() {
                   Joined {formatDate(userData.created_at)}
                 </span>
               </div>
+              <div className="mt-3">
+                <TrustSignalsRow
+                  band={userData.builder_score_band}
+                  completedProjects={userData.completed_projects_count}
+                  receipts={userData.receipts_count}
+                  lastActiveAt={userData.last_active_at}
+                />
+              </div>
             </div>
           </div>
         </div>
+
+        <div className="bg-card border border-border rounded-xl shadow-card p-6 mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-foreground">Share Profile</h3>
+            <button type="button" onClick={handleShareProfile} className="text-sm text-primary hover:underline">Copy Link</button>
+          </div>
+          <ProfileShareCard card={shareCard} />
+        </div>
+
+        {builderScore ? (
+          <div className="mb-8">
+            <BuilderScoreCard score={builderScore.score} band={builderScore.band} breakdown={builderScore.breakdown} />
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-3 gap-4 mb-8">
           <div className="bg-card border border-border p-4 rounded-xl shadow-card text-center">
@@ -185,6 +236,21 @@ export default function UserProfilePage() {
               <Link to={`/explore?user_id=${id}`} className="text-primary hover:text-primary-hover text-sm font-medium">
                 View all {stats.total_projects} projects
               </Link>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-8">
+          <h2 className="text-xl font-semibold text-foreground mb-4">Collaboration Receipts</h2>
+          {receipts.length === 0 ? (
+            <div className="bg-card border border-border rounded-xl shadow-card p-6 text-sm text-muted-foreground">
+              No receipts yet.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {receipts.map((receipt) => (
+                <CollaborationReceiptCard key={receipt.id} receipt={receipt} />
+              ))}
             </div>
           )}
         </div>

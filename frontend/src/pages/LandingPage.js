@@ -31,8 +31,7 @@ export default function LandingPage() {
               <span className="gradient-text">Share your journey.</span>
             </h1>
             <p className="text-lg text-muted-foreground leading-relaxed mb-8 max-w-xl">
-              MzansiBuilds is where South African developers come to build in public, track progress,
-              collaborate, and celebrate completed projects.
+              MzansiBuilds helps builders discover active opportunities, evaluate project momentum, and prove collaboration credibility.
             </p>
             <div className="flex flex-wrap gap-4">
               <Button asChild size="lg" variant="brand">
@@ -42,8 +41,8 @@ export default function LandingPage() {
                 </Link>
               </Button>
               <Button variant="outline" size="lg" asChild>
-                <Link to="/feed" data-testid="explore-feed-btn">
-                  Explore Feed
+                <Link to="/open-roles" data-testid="explore-feed-btn">
+                  Browse Open Roles
                 </Link>
               </Button>
             </div>
@@ -70,7 +69,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-xl font-semibold text-foreground mb-3">Track Progress</h3>
               <p className="text-muted-foreground">
-                Move through project stages from idea to completion. Set milestones and share updates along the way.
+                Evaluate momentum with health, timeline, and activity signals instead of guessing.
               </p>
             </div>
 
@@ -80,7 +79,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-xl font-semibold text-foreground mb-3">Collaborate</h3>
               <p className="text-muted-foreground">
-                Find collaborators for your projects. Comment, request to join, and build together with the community.
+                Discover matched projects, suggested collaborators, and open roles that fit your skills.
               </p>
             </div>
 
@@ -90,7 +89,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-xl font-semibold text-foreground mb-3">Celebrate</h3>
               <p className="text-muted-foreground">
-                When you ship, your project joins the Celebration Wall. Get recognized for completing what you started.
+                Build trust with builder score, receipts, and verifiable collaboration signals.
               </p>
             </div>
           </div>
