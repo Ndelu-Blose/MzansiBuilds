@@ -1,8 +1,5 @@
 const { test, expect } = require('@playwright/test');
 
-/** Matches production build `REACT_APP_BACKEND_URL` (see frontend/.env.local). */
-const BACKEND = process.env.E2E_BACKEND_ORIGIN || 'http://localhost:8000';
-
 const PROJECT_ID = '00000000-0000-4000-8000-000000000099';
 const OWNER_ID = '00000000-0000-4000-8000-000000000001';
 const VISITOR_ID = '00000000-0000-4000-8000-000000000002';
@@ -89,7 +86,7 @@ async function installBackendMock(page, { actingUserId, projectOverrides } = {})
   const milestones = [];
   let milestoneSeq = 0;
 
-  await page.route(`${BACKEND}/**`, async (route) => {
+  await page.route('**/api/**', async (route) => {
     const request = route.request();
     const method = request.method();
     const url = new URL(request.url());
@@ -349,12 +346,26 @@ async function installBackendMock(page, { actingUserId, projectOverrides } = {})
       await route.continue();
       return;
     }
+    const body = route.request().postData() || '';
+    const isVisitor = body.toLowerCase().includes('visitor%40e2e.test') || body.toLowerCase().includes('visitor@e2e.test');
+    const user = isVisitor ? loginUser(VISITOR_ID, 'visitor@e2e.test') : loginUser(OWNER_ID, 'owner@e2e.test');
     await route.fulfill({
-      status: 400,
+      status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        error: 'invalid_grant',
-        error_description: 'Invalid login credentials',
+        access_token: 'e2e-access-token',
+        token_type: 'bearer',
+        expires_in: 3600,
+        refresh_token: 'e2e-refresh-token',
+        user: {
+          id: user.id,
+          email: user.email,
+          role: 'authenticated',
+          aud: 'authenticated',
+          app_metadata: { provider: 'email' },
+          user_metadata: { full_name: user.name },
+          created_at: iso(),
+        },
       }),
     });
   });

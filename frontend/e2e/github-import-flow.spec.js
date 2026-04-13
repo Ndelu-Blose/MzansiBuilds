@@ -1,6 +1,5 @@
 const { test, expect } = require('@playwright/test');
 
-const BACKEND = process.env.E2E_BACKEND_ORIGIN || 'http://localhost:8000';
 const OWNER_ID = '00000000-0000-4000-8000-000000000001';
 const IMPORTED_PROJECT_ID = '00000000-0000-4000-8000-0000000000ab';
 const GITHUB_REPO_ID = 424242;
@@ -92,7 +91,7 @@ function importedProjectResponse(overrides = {}) {
 async function installGithubImportMocks(page) {
   let lastImportPayload = null;
 
-  await page.route(`${BACKEND}/**`, async (route) => {
+  await page.route('**/api/**', async (route) => {
     const request = route.request();
     const method = request.method();
     const url = new URL(request.url());
@@ -171,12 +170,24 @@ async function installGithubImportMocks(page) {
       await route.continue();
       return;
     }
+    const user = loginUser(OWNER_ID, 'owner@e2e.test');
     await route.fulfill({
-      status: 400,
+      status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        error: 'invalid_grant',
-        error_description: 'Invalid login credentials',
+        access_token: 'e2e-access-token',
+        token_type: 'bearer',
+        expires_in: 3600,
+        refresh_token: 'e2e-refresh-token',
+        user: {
+          id: user.id,
+          email: user.email,
+          role: 'authenticated',
+          aud: 'authenticated',
+          app_metadata: { provider: 'email' },
+          user_metadata: { full_name: user.name },
+          created_at: iso(),
+        },
       }),
     });
   });
