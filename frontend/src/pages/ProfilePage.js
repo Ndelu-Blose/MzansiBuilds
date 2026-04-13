@@ -57,11 +57,15 @@ export default function ProfilePage() {
           if (digestRes?.data) {
             setDigestPrefs((prev) => ({ ...prev, enabled: true }));
           }
-        } catch (_err) {}
+        } catch (_err) {
+          console.debug('Digest preview unavailable on profile load', _err);
+        }
         try {
           const checklistRes = await activationAPI.getChecklist();
           setActivationChecklist(checklistRes.data || { profile_items: [], owner_items: [], top_items: [] });
-        } catch (_err) {}
+        } catch (_err) {
+          console.debug('Activation checklist unavailable on profile load', _err);
+        }
       } catch (error) {
         console.error('Error fetching profile:', error);
         setErrorMessage('Could not load your profile. Please refresh and try again.');
