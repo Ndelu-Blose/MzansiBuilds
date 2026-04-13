@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { Rss, Trophy, FolderKanban, LogOut, Menu, X, Code, Bell } from 'lucide-react';
+import { Rss, Trophy, FolderKanban, LogOut, Menu, X, Code, Bell, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { notificationsAPI } from '../lib/api';
 import { Button } from '@/components/ui/button';
@@ -126,6 +126,10 @@ export default function SiteHeader({ variant = 'app' }) {
             <NavLink to="/explore" className={desktopNavLink}>
               <Code className="w-4 h-4 shrink-0" />
               Explore
+            </NavLink>
+            <NavLink to="/open-roles" className={desktopNavLink}>
+              <Users className="w-4 h-4 shrink-0" />
+              Open Roles
             </NavLink>
             <NavLink to="/feed" className={desktopNavLink}>
               <Rss className="w-4 h-4 shrink-0" />

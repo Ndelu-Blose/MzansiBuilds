@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from schemas import UserCreate, UserLogin, ProfileUpdate
+from schemas import UserCreate, UserLogin, ProfileUpdate, BuilderScoreResponse
 
 
 def test_user_create_valid():
@@ -45,3 +45,21 @@ def test_profile_update_supports_extended_fields():
 def test_profile_update_rejects_short_username():
     with pytest.raises(ValidationError):
         ProfileUpdate(username="ab")
+
+
+def test_builder_score_response_shape():
+    payload = BuilderScoreResponse(
+        score=62,
+        band="Reliable Collaborator",
+        breakdown={
+            "profile_complete": 10,
+            "completed_projects": 15,
+            "active_projects": 5,
+            "milestones": 9,
+            "recent_activity": 10,
+            "collaboration_quality": 13,
+            "stale_penalty": 0,
+        },
+    )
+    assert payload.score == 62
+    assert payload.band == "Reliable Collaborator"

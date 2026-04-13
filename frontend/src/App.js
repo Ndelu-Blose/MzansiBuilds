@@ -16,6 +16,7 @@ import ProjectDetailPage from './pages/ProjectDetailPage';
 import ProfilePage from './pages/ProfilePage';
 import ExplorePage from './pages/ExplorePage';
 import UserProfilePage from './pages/UserProfilePage';
+import OpenRolesPage from './pages/OpenRolesPage';
 
 import './index.css';
 
@@ -32,6 +33,7 @@ function App() {
           <Route path="/feed" element={<FeedPage />} />
           <Route path="/celebration" element={<CelebrationPage />} />
           <Route path="/explore" element={<ExplorePage />} />
+          <Route path="/open-roles" element={<OpenRolesPage />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/user/:id" element={<UserProfilePage />} />
           

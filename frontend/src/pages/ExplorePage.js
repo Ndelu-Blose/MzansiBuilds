@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { projectsAPI } from '../lib/api';
+import { Link } from 'react-router-dom';
+import { projectsAPI, discoveryAPI } from '../lib/api';
 import { Loader2, Search, Filter, X, Code } from 'lucide-react';
 import Layout from '../components/Layout';
 import ProjectCard from '../components/ProjectCard';
@@ -32,6 +33,8 @@ export default function ExplorePage() {
   const [tech, setTech] = useState('');
   const [sort, setSort] = useState('recent');
   const [showFilters, setShowFilters] = useState(false);
+  const [trendingProjects, setTrendingProjects] = useState([]);
+  const [trendingBuilders, setTrendingBuilders] = useState([]);
 
   const limit = 12;
   const offsetRef = useRef(0);
@@ -60,7 +63,13 @@ export default function ExplorePage() {
         if (tech) params.tech = tech;
 
         const response = await projectsAPI.list(params);
+        const [tp, tb] = await Promise.all([
+          discoveryAPI.getTrendingProjects({ limit: 4 }),
+          discoveryAPI.getTrendingBuilders({ limit: 4 }),
+        ]);
         const items = response.data.items || [];
+        setTrendingProjects(tp.data.items || []);
+        setTrendingBuilders(tb.data.items || []);
 
         if (loadMore) {
           setProjects((prev) => [...prev, ...items]);
@@ -107,6 +116,9 @@ export default function ExplorePage() {
             Explore Projects
           </h1>
           <p className="text-muted-foreground mt-1">Discover what developers are building in public</p>
+          <div className="mt-3">
+            <Link to="/open-roles" className="text-sm text-primary hover:underline">Browse Open Roles Board</Link>
+          </div>
         </div>
 
         <div className="bg-card border border-border rounded-xl shadow-card p-4 mb-8">
@@ -237,6 +249,22 @@ export default function ExplorePage() {
           <p className="text-sm text-muted-foreground mb-6">
             Showing {projects.length} of {total} projects
           </p>
+        )}
+        {!loading && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="bg-card border border-border rounded-xl p-4">
+              <h3 className="font-semibold text-foreground mb-2">Trending Projects</h3>
+              <ul className="text-sm text-muted-foreground space-y-1">
+                {trendingProjects.slice(0, 3).map((p) => <li key={p.id}>{p.title}</li>)}
+              </ul>
+            </div>
+            <div className="bg-card border border-border rounded-xl p-4">
+              <h3 className="font-semibold text-foreground mb-2">Momentum Builders</h3>
+              <ul className="text-sm text-muted-foreground space-y-1">
+                {trendingBuilders.slice(0, 3).map((b, i) => <li key={b.user?.id || i}>{b.user?.name || 'Builder'}</li>)}
+              </ul>
+            </div>
+          </div>
         )}
 
         {loading ? (

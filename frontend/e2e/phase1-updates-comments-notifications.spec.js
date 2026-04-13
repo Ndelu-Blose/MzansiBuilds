@@ -1,6 +1,5 @@
 const { test, expect } = require('@playwright/test');
 
-const BACKEND = process.env.E2E_BACKEND_ORIGIN || 'http://localhost:8001';
 const PROJECT_ID = '00000000-0000-4000-8000-000000000099';
 const OWNER_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -46,7 +45,7 @@ async function installPhase1Mocks(page) {
     },
   ];
 
-  await page.route(`${BACKEND}/**`, async (route) => {
+  await page.route('**/api/**', async (route) => {
     const request = route.request();
     const method = request.method();
     const url = new URL(request.url());
@@ -101,6 +100,34 @@ async function installPhase1Mocks(page) {
           },
         ],
       });
+      return;
+    }
+    if (method === 'GET' && path === '/api/my/bookmarks') {
+      await json({ items: [], total: 0, limit: 5, offset: 0 });
+      return;
+    }
+    if (method === 'GET' && path === '/api/projects/matched') {
+      await json({ items: [], total: 0, limit: 5, offset: 0 });
+      return;
+    }
+    if (method === 'GET' && path === '/api/trending/projects') {
+      await json({ items: [] });
+      return;
+    }
+    if (method === 'GET' && path === '/api/trending/builders') {
+      await json({ items: [] });
+      return;
+    }
+    if (method === 'GET' && path === '/api/digest/preview') {
+      await json({ active_projects: [], open_roles: [], trending_builders: [], milestone_highlights: [] });
+      return;
+    }
+    if (method === 'GET' && path === '/api/activation/checklist') {
+      await json({ profile_items: [], owner_items: [], top_items: [] });
+      return;
+    }
+    if (method === 'GET' && path === '/api/dashboard/activation-state') {
+      await json({ has_projects: true, has_matches: false, has_activity: true, skills_count: 1, first_match_count: 0 });
       return;
     }
 
@@ -240,6 +267,24 @@ async function installPhase1Mocks(page) {
       await json({ items: [] });
       return;
     }
+    if (method === 'GET' && path === `/api/projects/${PROJECT_ID}/timeline`) {
+      await json({ items: [] });
+      return;
+    }
+    if (method === 'GET' && path === `/api/projects/${PROJECT_ID}/share-card`) {
+      await json({
+        project_id: PROJECT_ID,
+        title: 'E2E project',
+        stage: 'in_progress',
+        health_status: 'active',
+        roles_needed: [],
+        owner_name: 'Owner User',
+        owner_score_band: 'Active Builder',
+        last_activity_at: iso(),
+        share_url: 'http://127.0.0.1:4173/projects/00000000-0000-4000-8000-000000000099',
+      });
+      return;
+    }
     if (method === 'GET' && path === `/api/projects/${PROJECT_ID}/activity`) {
       await json({ items: [] });
       return;
@@ -271,10 +316,25 @@ async function installPhase1Mocks(page) {
       await route.continue();
       return;
     }
+    const user = authorUser();
     await route.fulfill({
-      status: 400,
+      status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ error: 'invalid_grant', error_description: 'Invalid login credentials' }),
+      body: JSON.stringify({
+        access_token: 'e2e-access-token',
+        token_type: 'bearer',
+        expires_in: 3600,
+        refresh_token: 'e2e-refresh-token',
+        user: {
+          id: user.id,
+          email: user.email,
+          role: 'authenticated',
+          aud: 'authenticated',
+          app_metadata: { provider: 'email' },
+          user_metadata: { full_name: user.name },
+          created_at: iso(),
+        },
+      }),
     });
   });
 }

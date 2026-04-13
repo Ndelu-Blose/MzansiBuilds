@@ -4,6 +4,14 @@
 
 MzansiBuilds is a full-stack platform enabling South African developers to build in public, track progress, collaborate, and celebrate completed projects. This document provides the functional decomposition of the system.
 
+Current architecture is implemented in layered product capabilities:
+
+- Discovery intelligence (bookmarks, matching, open roles, trending).
+- Credibility intelligence (builder score, trust signals, receipts, timeline, health).
+- Growth loops (notifications, digest, momentum surfaces).
+- Activation guidance (checklist, owner nudges, first-match banner, intelligent empty states).
+- Distribution/positioning surfaces (share cards, public trust summaries, positioning-first landing flows).
+
 ---
 
 ## 1. Core Functional Domains
@@ -17,7 +25,8 @@ The system is organized into **6 main functional domains**:
 | Project Lifecycle Management | What is being built, who owns it, and what state is it in? |
 | Progress & Activity Tracking | How does the platform show that work is actually moving? |
 | Community Engagement & Collaboration | How do other developers engage with what's being built? |
-| Discovery & Recognition | How do users find projects and how does the platform celebrate progress? |
+| Discovery, Trust & Growth | How do users find opportunities, evaluate trust, and return? |
+| Activation & Distribution | How does the platform guide next actions and support sharing? |
 
 ---
 

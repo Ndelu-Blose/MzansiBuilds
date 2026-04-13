@@ -31,7 +31,7 @@ from models import (
     ProjectStage, CollaborationStatus, ConnectedAccount, ConnectedProvider,
     ProjectRepository, ProjectLanguage, ProjectCommit, ProjectContributor, ProjectFileHighlight,
     RepoProvider, OwnershipType, VerificationStatus, ProjectType, ProjectUpdateType, MilestoneStatus,
-    Notification,
+    Notification, ProjectBookmark, CollaborationReceipt, DigestPreference,
 )
 from schemas import (
     UserCreate, UserLogin, UserResponse, UserWithProfile,
@@ -51,7 +51,21 @@ from schemas import (
     GitHubRepoLanguagesResponse,
     GitHubRepoReadmeSummaryResponse,
     ImportGitHubProjectRequest,
-    CreateManualProjectRequest
+    CreateManualProjectRequest,
+    MatchedProjectListResponse,
+    SuggestedCollaboratorResponse,
+    ProjectTimelineResponse,
+    BuilderScoreResponse,
+    CollaborationReceiptCreate,
+    CollaborationReceiptListResponse,
+    OpenRoleListResponse,
+    TrendingBuilderItemResponse,
+    WeeklyDigestPreviewResponse,
+    DigestPreferenceUpdate,
+    ActivationChecklistResponse,
+    DashboardActivationStateResponse,
+    ProjectShareCardResponse,
+    ProfileShareCardResponse,
 )
 from github_oauth_service import (
     build_authorization_url, exchange_code_for_token, fetch_authenticated_profile,
@@ -67,6 +81,12 @@ from github_api_service import (
 from project_import_service import create_imported_project
 from project_sync_service import run_repo_sync
 from project_activity_service import merge_project_activity
+from services.matching import match_skills_to_roles
+from services.health import compute_project_health
+from services.timeline import normalize_timeline_events
+from services.builder_score import compute_builder_score
+from services.receipts import create_collaboration_receipt
+from services.digest import build_weekly_digest_preview
 from notification_service import (
     add_notification,
     NOTIFICATION_TYPE_COLLABORATION_REQUEST,
@@ -74,6 +94,10 @@ from notification_service import (
     NOTIFICATION_TYPE_PROJECT_COMMENT,
     NOTIFICATION_TYPE_MILESTONE_COMPLETED,
     NOTIFICATION_TYPE_PROJECT_UPDATE_POSTED,
+    NOTIFICATION_TYPE_MATCH_FOUND,
+    NOTIFICATION_TYPE_PROJECT_BOOKMARKED,
+    NOTIFICATION_TYPE_SUGGESTED_COLLABORATOR,
+    NOTIFICATION_TYPE_RECEIPT_ISSUED,
 )
 from oauth_state_service import create_oauth_state, consume_oauth_state, cleanup_expired_states
 from email_service import (
@@ -331,7 +355,8 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(get_db)
 
 
 # ========== Helper Functions ==========
-def user_to_response(user: User) -> dict:
+def user_to_response(user: User, trust: Optional[dict] = None) -> dict:
+    trust = trust or {}
     return {
         "id": user.id,
         "email": user.email,
@@ -340,11 +365,27 @@ def user_to_response(user: User) -> dict:
         "role": user.role,
         "auth_provider": user.auth_provider,
         "picture": user.picture,
+        "builder_score": trust.get("builder_score"),
+        "builder_score_band": trust.get("builder_score_band"),
+        "completed_projects_count": trust.get("completed_projects_count", 0),
+        "receipts_count": trust.get("receipts_count", 0),
+        "last_active_at": trust.get("last_active_at"),
         "created_at": user.created_at.isoformat() if user.created_at else None
     }
 
 
-def profile_to_response(profile: Profile, user: Optional[User] = None) -> dict:
+def user_to_response_for_project_owner(user: User, trust: Optional[dict] = None) -> dict:
+    """Owner payload on projects: use Profile.avatar_url when User.picture is unset."""
+    data = user_to_response(user, trust=trust)
+    if data.get("picture"):
+        return data
+    prof = getattr(user, "profile", None)
+    if prof is not None and getattr(prof, "avatar_url", None):
+        data["picture"] = prof.avatar_url
+    return data
+
+
+def profile_to_response(profile: Profile, user: Optional[User] = None, trust: Optional[dict] = None) -> dict:
     skills = None
     if profile.skills:
         try:
@@ -365,6 +406,11 @@ def profile_to_response(profile: Profile, user: Optional[User] = None) -> dict:
         "linkedin_url": profile.linkedin_url,
         "portfolio_url": profile.portfolio_url,
         "avatar_url": profile.avatar_url,
+        "builder_score": (trust or {}).get("builder_score"),
+        "builder_score_band": (trust or {}).get("builder_score_band"),
+        "completed_projects_count": (trust or {}).get("completed_projects_count", 0),
+        "receipts_count": (trust or {}).get("receipts_count", 0),
+        "last_active_at": (trust or {}).get("last_active_at"),
         "created_at": profile.created_at.isoformat() if profile.created_at else None,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None
     }
@@ -395,7 +441,330 @@ def normalize_profile_url(value: Optional[str]) -> Optional[str]:
     return normalized
 
 
-def project_to_response(project: Project, include_user: bool = False) -> dict:
+def _safe_json_list(value: Optional[str]) -> list:
+    if not value:
+        return []
+    try:
+        data = json.loads(value)
+        return data if isinstance(data, list) else []
+    except (TypeError, json.JSONDecodeError):
+        return []
+
+
+async def _bookmark_count_map(db: AsyncSession, project_ids: List[str]) -> dict:
+    if not project_ids:
+        return {}
+    result = await db.execute(
+        select(ProjectBookmark.project_id, func.count(ProjectBookmark.id))
+        .where(ProjectBookmark.project_id.in_(project_ids))
+        .group_by(ProjectBookmark.project_id)
+    )
+    return {row[0]: int(row[1] or 0) for row in result.all()}
+
+
+async def _bookmarked_ids_for_user(db: AsyncSession, user_id: Optional[str], project_ids: List[str]) -> set:
+    if not user_id or not project_ids:
+        return set()
+    result = await db.execute(
+        select(ProjectBookmark.project_id).where(
+            ProjectBookmark.user_id == user_id,
+            ProjectBookmark.project_id.in_(project_ids),
+        )
+    )
+    return {row[0] for row in result.all()}
+
+
+async def _project_activity_map(db: AsyncSession, project_ids: List[str]) -> dict:
+    if not project_ids:
+        return {}
+
+    project_ids_set = set(project_ids)
+    result: dict = {}
+
+    def _set_latest(pid: str, value: Optional[datetime]):
+        if not pid or not value:
+            return
+        current = result.get(pid)
+        if current is None or value > current:
+            result[pid] = value
+
+    updates_result = await db.execute(
+        select(ProjectUpdate.project_id, func.max(ProjectUpdate.created_at))
+        .where(ProjectUpdate.project_id.in_(project_ids))
+        .group_by(ProjectUpdate.project_id)
+    )
+    for pid, ts in updates_result.all():
+        _set_latest(pid, ts)
+
+    milestones_result = await db.execute(
+        select(Milestone.project_id, func.max(Milestone.updated_at))
+        .where(Milestone.project_id.in_(project_ids))
+        .group_by(Milestone.project_id)
+    )
+    for pid, ts in milestones_result.all():
+        _set_latest(pid, ts)
+
+    collab_result = await db.execute(
+        select(CollaborationRequest.project_id, func.max(CollaborationRequest.created_at))
+        .where(CollaborationRequest.project_id.in_(project_ids))
+        .group_by(CollaborationRequest.project_id)
+    )
+    for pid, ts in collab_result.all():
+        _set_latest(pid, ts)
+
+    repo_result = await db.execute(
+        select(ProjectRepository.project_id, func.max(ProjectRepository.last_synced_at))
+        .where(ProjectRepository.project_id.in_(project_ids))
+        .group_by(ProjectRepository.project_id)
+    )
+    for pid, ts in repo_result.all():
+        _set_latest(pid, ts)
+
+    project_result = await db.execute(
+        select(Project.id, Project.updated_at).where(Project.id.in_(project_ids_set))
+    )
+    for pid, ts in project_result.all():
+        _set_latest(pid, ts)
+
+    return result
+
+
+async def _compute_user_trust(db: AsyncSession, user_id: str) -> dict:
+    profile_result = await db.execute(select(Profile).where(Profile.user_id == user_id))
+    profile = profile_result.scalar_one_or_none()
+    projects_result = await db.execute(select(Project).where(Project.user_id == user_id))
+    projects = projects_result.scalars().all()
+    project_ids = [p.id for p in projects]
+
+    completed_projects = len([p for p in projects if p.stage == ProjectStage.completed])
+    active_projects = len([p for p in projects if p.stage in (ProjectStage.in_progress, ProjectStage.planning, ProjectStage.testing)])
+
+    milestone_count = 0
+    recent_updates = 0
+    accepted_collaborations = 0
+    last_active_at = None
+
+    if project_ids:
+        milestone_result = await db.execute(
+            select(func.count(Milestone.id)).where(
+                Milestone.project_id.in_(project_ids),
+                Milestone.status == MilestoneStatus.done,
+            )
+        )
+        milestone_count = int(milestone_result.scalar() or 0)
+
+        updates_result = await db.execute(
+            select(func.count(ProjectUpdate.id)).where(
+                ProjectUpdate.project_id.in_(project_ids),
+                ProjectUpdate.created_at >= (datetime.now(timezone.utc) - timedelta(days=21)),
+            )
+        )
+        recent_updates = int(updates_result.scalar() or 0)
+
+        collab_result = await db.execute(
+            select(func.count(CollaborationRequest.id)).where(
+                CollaborationRequest.project_id.in_(project_ids),
+                CollaborationRequest.status == CollaborationStatus.accepted,
+            )
+        )
+        accepted_collaborations = int(collab_result.scalar() or 0)
+
+        project_activity = await _project_activity_map(db, project_ids)
+        if project_activity:
+            last_active_at = max(project_activity.values())
+
+    receipts_result = await db.execute(
+        select(func.count(CollaborationReceipt.id)).where(
+            or_(
+                CollaborationReceipt.owner_user_id == user_id,
+                CollaborationReceipt.collaborator_user_id == user_id,
+            )
+        )
+    )
+    receipts_count = int(receipts_result.scalar() or 0)
+
+    profile_complete = bool(
+        profile and (
+            (profile.bio and profile.bio.strip())
+            or (profile.headline and profile.headline.strip())
+            or (profile.skills and _safe_json_list(profile.skills))
+        )
+    )
+    is_stale = bool(last_active_at and last_active_at < (datetime.now(timezone.utc) - timedelta(days=45)))
+    score, breakdown, band = compute_builder_score(
+        profile_complete=profile_complete,
+        completed_projects=completed_projects,
+        active_projects=active_projects,
+        completed_milestones=milestone_count,
+        recent_updates=recent_updates,
+        accepted_collaborations=accepted_collaborations,
+        receipts_count=receipts_count,
+        is_stale=is_stale,
+    )
+
+    return {
+        "builder_score": score,
+        "builder_score_band": band,
+        "breakdown": breakdown,
+        "completed_projects_count": completed_projects,
+        "receipts_count": receipts_count,
+        "last_active_at": last_active_at.isoformat() if last_active_at else None,
+    }
+
+
+def _health_rank(value: Optional[str]) -> int:
+    if value == "active":
+        return 3
+    if value == "quiet":
+        return 2
+    if value == "stalled":
+        return 1
+    if value == "completed":
+        return 0
+    return 0
+
+
+def _recency_rank(last_activity: Optional[datetime]) -> int:
+    if not last_activity:
+        return 0
+    age_days = max(0, (datetime.now(timezone.utc) - last_activity).days)
+    if age_days <= 7:
+        return 3
+    if age_days <= 21:
+        return 2
+    if age_days <= 45:
+        return 1
+    return 0
+
+
+def _open_roles_rank(
+    *,
+    health_status: Optional[str],
+    last_activity_at: Optional[datetime],
+    owner_score: Optional[int],
+    bookmark_count: Optional[int],
+) -> tuple:
+    return (
+        _health_rank(health_status),
+        _recency_rank(last_activity_at),
+        int(owner_score or 0),
+        int(bookmark_count or 0),
+    )
+
+
+def _project_momentum_score(
+    *,
+    bookmark_count: Optional[int],
+    health_status: Optional[str],
+    owner_score: Optional[int],
+    last_activity_at: Optional[datetime],
+) -> int:
+    return (
+        int(bookmark_count or 0) * 2
+        + _health_rank(health_status)
+        + _recency_rank(last_activity_at)
+        + int((owner_score or 0) / 10)
+    )
+
+
+def _builder_momentum_score(*, builder_score: Optional[int], receipts_count: Optional[int], last_active_at: Optional[str]) -> int:
+    last_active_dt = None
+    if last_active_at:
+        try:
+            last_active_dt = datetime.fromisoformat(last_active_at.replace("Z", "+00:00"))
+        except ValueError:
+            last_active_dt = None
+    return int(builder_score or 0) + int(receipts_count or 0) * 3 + _recency_rank(last_active_dt)
+
+
+async def _build_activation_checklist(db: AsyncSession, user: User) -> dict:
+    profile_result = await db.execute(select(Profile).where(Profile.user_id == user.id))
+    profile = profile_result.scalar_one_or_none()
+    projects_result = await db.execute(select(Project).where(Project.user_id == user.id))
+    projects = projects_result.scalars().all()
+
+    profile_items = []
+    owner_items = []
+
+    skills = _safe_json_list(profile.skills) if profile and profile.skills else []
+    if not skills:
+        profile_items.append({
+            "id": "add-skills",
+            "title": "Add your core skills",
+            "description": "Skills unlock matched projects and role-fit alerts.",
+            "action_path": "/profile",
+            "priority": 100,
+            "category": "profile",
+        })
+    if not (profile and profile.bio and profile.bio.strip()):
+        profile_items.append({
+            "id": "add-bio",
+            "title": "Write a short builder bio",
+            "description": "A bio increases trust in suggestions and collaborations.",
+            "action_path": "/profile",
+            "priority": 80,
+            "category": "profile",
+        })
+    if not (profile and profile.headline and profile.headline.strip()):
+        profile_items.append({
+            "id": "add-headline",
+            "title": "Set a clear headline",
+            "description": "A headline helps owners quickly understand your fit.",
+            "action_path": "/profile",
+            "priority": 70,
+            "category": "profile",
+        })
+
+    if projects:
+        project_ids = [p.id for p in projects]
+        updates_count_result = await db.execute(select(func.count(ProjectUpdate.id)).where(ProjectUpdate.project_id.in_(project_ids)))
+        milestones_count_result = await db.execute(select(func.count(Milestone.id)).where(Milestone.project_id.in_(project_ids)))
+        has_roles_needed = any(bool(_safe_json_list(p.roles_needed_json)) for p in projects if p.looking_for_help)
+
+        if not has_roles_needed:
+            owner_items.append({
+                "id": "add-roles-needed",
+                "title": "Add roles needed",
+                "description": "Projects with roles needed appear in Open Roles and match better.",
+                "action_path": "/dashboard",
+                "priority": 95,
+                "category": "owner",
+            })
+        if int(updates_count_result.scalar() or 0) == 0:
+            owner_items.append({
+                "id": "post-first-update",
+                "title": "Post your first project update",
+                "description": "Updates improve project health, trending, and digest visibility.",
+                "action_path": "/dashboard",
+                "priority": 90,
+                "category": "owner",
+            })
+        if int(milestones_count_result.scalar() or 0) == 0:
+            owner_items.append({
+                "id": "add-first-milestone",
+                "title": "Add your first milestone",
+                "description": "Milestones make your timeline and progress signals stronger.",
+                "action_path": "/dashboard",
+                "priority": 85,
+                "category": "owner",
+            })
+
+    all_items = sorted(profile_items + owner_items, key=lambda item: item.get("priority", 0), reverse=True)
+    return {
+        "profile_items": profile_items,
+        "owner_items": owner_items,
+        "top_items": all_items[:2],
+    }
+
+
+def project_to_response(
+    project: Project,
+    include_user: bool = False,
+    bookmark_count: int = 0,
+    is_bookmarked: bool = False,
+    last_activity_at: Optional[datetime] = None,
+    owner_trust: Optional[dict] = None,
+) -> dict:
     tech_stack = None
     if project.tech_stack:
         try:
@@ -414,9 +783,9 @@ def project_to_response(project: Project, include_user: bool = False) -> dict:
         "short_pitch": project.short_pitch,
         "long_description": project.long_description,
         "category": project.category,
-        "tags": json.loads(project.tags_json) if project.tags_json else [],
+        "tags": _safe_json_list(project.tags_json),
         "looking_for_help": project.looking_for_help,
-        "roles_needed": json.loads(project.roles_needed_json) if project.roles_needed_json else [],
+        "roles_needed": _safe_json_list(project.roles_needed_json),
         "demo_url": project.demo_url,
         "problem_statement": project.problem_statement,
         "roadmap_summary": project.roadmap_summary,
@@ -424,6 +793,10 @@ def project_to_response(project: Project, include_user: bool = False) -> dict:
         "verification_status": project.verification_status.value if project.verification_status else "unverified",
         "ownership_type": project.ownership_type.value if project.ownership_type else "none",
         "repo_connected": bool(project.repo_connected),
+        "bookmark_count": int(bookmark_count or 0),
+        "is_bookmarked": bool(is_bookmarked),
+        "last_activity_at": last_activity_at.isoformat() if last_activity_at else None,
+        "health_status": compute_project_health(project.stage.value if project.stage else None, last_activity_at),
         "created_at": project.created_at.isoformat() if project.created_at else None,
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
     }
@@ -437,7 +810,7 @@ def project_to_response(project: Project, include_user: bool = False) -> dict:
         response["import_provenance"] = None
 
     if include_user and project.user:
-        response["user"] = user_to_response(project.user)
+        response["user"] = user_to_response_for_project_owner(project.user, trust=owner_trust)
     
     return response
 
@@ -485,6 +858,40 @@ def notification_to_response(n: Notification) -> dict:
     }
 
 
+async def _add_notification_if_not_duplicate(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    notif_type: str,
+    title: str,
+    body: str,
+    project_id: Optional[str] = None,
+    dedupe_window_minutes: int = 90,
+) -> bool:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max(1, dedupe_window_minutes))
+    existing_result = await db.execute(
+        select(Notification.id).where(
+            Notification.user_id == user_id,
+            Notification.type == notif_type,
+            Notification.title == (title or "")[:255],
+            Notification.project_id == project_id,
+            Notification.created_at >= cutoff,
+        ).limit(1)
+    )
+    if existing_result.scalar_one_or_none():
+        return False
+
+    add_notification(
+        db,
+        user_id=user_id,
+        notif_type=notif_type,
+        title=title,
+        body=body,
+        project_id=project_id,
+    )
+    return True
+
+
 def milestone_to_response(milestone: Milestone) -> dict:
     return {
         "id": milestone.id,
@@ -497,6 +904,24 @@ def milestone_to_response(milestone: Milestone) -> dict:
         "created_by_user_id": milestone.created_by_user_id,
         "created_at": milestone.created_at.isoformat() if milestone.created_at else None,
         "updated_at": milestone.updated_at.isoformat() if milestone.updated_at else None,
+    }
+
+
+def receipt_to_response(receipt: CollaborationReceipt, project_title: Optional[str] = None) -> dict:
+    return {
+        "id": receipt.id,
+        "project_id": receipt.project_id,
+        "collaboration_id": receipt.collaboration_id,
+        "owner_user_id": receipt.owner_user_id,
+        "collaborator_user_id": receipt.collaborator_user_id,
+        "role_title": receipt.role_title,
+        "started_at": receipt.started_at.isoformat() if receipt.started_at else None,
+        "ended_at": receipt.ended_at.isoformat() if receipt.ended_at else None,
+        "summary": receipt.summary,
+        "owner_acknowledged": bool(receipt.owner_acknowledged),
+        "collaborator_acknowledged": bool(receipt.collaborator_acknowledged),
+        "created_at": receipt.created_at.isoformat() if receipt.created_at else None,
+        "project_title": project_title,
     }
 
 
@@ -634,13 +1059,14 @@ async def get_me(user: User = Depends(get_current_user), db: AsyncSession = Depe
     )
     profile = result.scalar_one_or_none()
     
-    response = user_to_response(user)
+    trust = await _compute_user_trust(db, user.id)
+    response = user_to_response(user, trust=trust)
     if not response.get("picture"):
         github_account = await get_active_github_account(db, user.id)
         if github_account and github_account.avatar_url:
             response["picture"] = github_account.avatar_url
     if profile:
-        response["profile"] = profile_to_response(profile)
+        response["profile"] = profile_to_response(profile, trust=trust)
     return response
 
 
@@ -1113,7 +1539,8 @@ async def get_profile(user: User = Depends(get_current_user), db: AsyncSession =
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     
-    return profile_to_response(profile, user=user)
+    trust = await _compute_user_trust(db, user.id)
+    return profile_to_response(profile, user=user, trust=trust)
 
 
 @api_router.put("/profile")
@@ -1164,7 +1591,8 @@ async def update_profile(data: ProfileUpdate, user: User = Depends(get_current_u
     await db.refresh(profile)
     await db.refresh(user)
     
-    return profile_to_response(profile, user=user)
+    trust = await _compute_user_trust(db, user.id)
+    return profile_to_response(profile, user=user, trust=trust)
 
 
 @api_router.get("/users/{user_id}/profile")
@@ -1187,9 +1615,10 @@ async def get_user_profile(user_id: str, db: AsyncSession = Depends(get_db)):
     completed_projects = len([p for p in projects if p.stage == ProjectStage.completed])
     active_projects = len([p for p in projects if p.stage == ProjectStage.in_progress])
     
-    response = user_to_response(user)
+    trust = await _compute_user_trust(db, user.id)
+    response = user_to_response(user, trust=trust)
     if user.profile:
-        response["profile"] = profile_to_response(user.profile, user=user)
+        response["profile"] = profile_to_response(user.profile, user=user, trust=trust)
     
     response["stats"] = {
         "total_projects": total_projects,
@@ -1202,6 +1631,121 @@ async def get_user_profile(user_id: str, db: AsyncSession = Depends(get_db)):
     response["recent_projects"] = [project_to_response(p) for p in recent_projects]
     
     return response
+
+
+@api_router.get("/users/{user_id}/builder-score", response_model=BuilderScoreResponse)
+async def get_user_builder_score(user_id: str, db: AsyncSession = Depends(get_db)):
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    if not user_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="User not found")
+    trust = await _compute_user_trust(db, user_id)
+    return {
+        "score": trust.get("builder_score", 0),
+        "band": trust.get("builder_score_band", "New Builder"),
+        "breakdown": trust.get("breakdown", {}),
+    }
+
+
+# ========== BOOKMARK ENDPOINTS ==========
+@api_router.post("/projects/{project_id}/bookmark")
+async def add_project_bookmark(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    existing_result = await db.execute(
+        select(ProjectBookmark).where(
+            ProjectBookmark.user_id == user.id,
+            ProjectBookmark.project_id == project_id,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if not existing:
+        db.add(ProjectBookmark(user_id=user.id, project_id=project_id))
+        if project.user_id and project.user_id != user.id:
+            await _add_notification_if_not_duplicate(
+                db,
+                user_id=project.user_id,
+                notif_type=NOTIFICATION_TYPE_PROJECT_BOOKMARKED,
+                title=f"Your project was bookmarked: {project.title}",
+                body=f"{user.name or user.email.split('@')[0]} bookmarked your project.",
+                project_id=project.id,
+            )
+        await db.commit()
+
+    counts = await _bookmark_count_map(db, [project_id])
+    return {
+        "project_id": project_id,
+        "bookmark_count": counts.get(project_id, 0),
+        "is_bookmarked": True,
+    }
+
+
+@api_router.delete("/projects/{project_id}/bookmark")
+async def remove_project_bookmark(project_id: str, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(ProjectBookmark).where(
+            ProjectBookmark.user_id == user.id,
+            ProjectBookmark.project_id == project_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row:
+        await db.delete(row)
+        await db.commit()
+
+    counts = await _bookmark_count_map(db, [project_id])
+    return {
+        "project_id": project_id,
+        "bookmark_count": counts.get(project_id, 0),
+        "is_bookmarked": False,
+    }
+
+
+@api_router.get("/my/bookmarks")
+async def get_my_bookmarks(
+    limit: int = 20,
+    offset: int = 0,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ProjectBookmark)
+        .options(selectinload(ProjectBookmark.project).selectinload(Project.user).selectinload(User.profile))
+        .where(ProjectBookmark.user_id == user.id)
+        .order_by(ProjectBookmark.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = result.scalars().all()
+    projects = [row.project for row in rows if row.project is not None]
+    project_ids = [p.id for p in projects]
+    counts = await _bookmark_count_map(db, project_ids)
+    activity_map = await _project_activity_map(db, project_ids)
+
+    count_result = await db.execute(select(func.count(ProjectBookmark.id)).where(ProjectBookmark.user_id == user.id))
+    total = int(count_result.scalar() or 0)
+
+    return {
+        "items": [
+            {
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "project": project_to_response(
+                    row.project,
+                    include_user=True,
+                    bookmark_count=counts.get(row.project_id, 0),
+                    is_bookmarked=True,
+                    last_activity_at=activity_map.get(row.project_id) or row.project.updated_at,
+                ) if row.project else None,
+            }
+            for row in rows
+            if row.project is not None
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 # ========== PROJECT ENDPOINTS ==========
@@ -1320,7 +1864,11 @@ async def create_project(data: ProjectCreate, user: User = Depends(get_current_u
     await db.refresh(project)
     
     # Load user for response
-    result = await db.execute(select(Project).options(selectinload(Project.user)).where(Project.id == project.id))
+    result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.user).selectinload(User.profile))
+        .where(Project.id == project.id)
+    )
     project = result.scalar_one()
     
     return project_to_response(project, include_user=True)
@@ -1335,9 +1883,10 @@ async def list_projects(
     sort: Optional[str] = "recent",  # recent, active, trending
     limit: int = 20,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    viewer: Optional[User] = Depends(get_optional_user),
 ):
-    query = select(Project).options(selectinload(Project.user))
+    query = select(Project).options(selectinload(Project.user).selectinload(User.profile))
     
     # Stage filter
     if stage:
@@ -1375,6 +1924,10 @@ async def list_projects(
     query = query.offset(offset).limit(limit)
     result = await db.execute(query)
     projects = result.scalars().all()
+    project_ids = [p.id for p in projects]
+    bookmark_counts = await _bookmark_count_map(db, project_ids)
+    bookmarked_ids = await _bookmarked_ids_for_user(db, viewer.id if viewer else None, project_ids)
+    activity_map = await _project_activity_map(db, project_ids)
     
     # Get total count with same filters
     count_query = select(func.count(Project.id))
@@ -1402,11 +1955,201 @@ async def list_projects(
     total = count_result.scalar()
     
     return {
-        "items": [project_to_response(p, include_user=True) for p in projects],
+        "items": [
+            project_to_response(
+                p,
+                include_user=True,
+                bookmark_count=bookmark_counts.get(p.id, 0),
+                is_bookmarked=p.id in bookmarked_ids,
+                last_activity_at=activity_map.get(p.id) or p.updated_at,
+            )
+            for p in projects
+        ],
         "total": total,
         "limit": limit,
         "offset": offset
     }
+
+
+@api_router.get("/projects/matched", response_model=MatchedProjectListResponse)
+async def get_matched_projects(
+    limit: int = 20,
+    offset: int = 0,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    profile_result = await db.execute(select(Profile).where(Profile.user_id == user.id))
+    profile = profile_result.scalar_one_or_none()
+    user_skills = _safe_json_list(profile.skills) if profile else []
+    if not user_skills:
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+
+    result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.user).selectinload(User.profile))
+        .where(
+            Project.user_id != user.id,
+            Project.looking_for_help.is_(True),
+        )
+        .order_by(Project.updated_at.desc())
+    )
+    candidates = result.scalars().all()
+
+    matches = []
+    for project in candidates:
+        roles_needed = _safe_json_list(project.roles_needed_json)
+        if not roles_needed:
+            continue
+        score, matched_skills = match_skills_to_roles(user_skills, roles_needed)
+        if score <= 0:
+            continue
+        matches.append((project, score, matched_skills, roles_needed))
+
+    matches.sort(key=lambda item: item[1], reverse=True)
+    sliced = matches[offset:offset + limit]
+    project_ids = [project.id for project, _, _, _ in sliced]
+    bookmark_counts = await _bookmark_count_map(db, project_ids)
+    bookmarked_ids = await _bookmarked_ids_for_user(db, user.id, project_ids)
+    activity_map = await _project_activity_map(db, project_ids)
+
+    items = []
+    for project, score, matched_skills, roles_needed in sliced:
+        payload = project_to_response(
+            project,
+            include_user=True,
+            bookmark_count=bookmark_counts.get(project.id, 0),
+            is_bookmarked=project.id in bookmarked_ids,
+            last_activity_at=activity_map.get(project.id) or project.updated_at,
+        )
+        payload["match_score"] = score
+        payload["matched_skills"] = matched_skills
+        payload["roles_needed"] = roles_needed
+        items.append(payload)
+
+    if items:
+        await _add_notification_if_not_duplicate(
+            db,
+            user_id=user.id,
+            notif_type=NOTIFICATION_TYPE_MATCH_FOUND,
+            title="New matched projects available",
+            body=f"We found {len(items)} projects that match your skills.",
+            project_id=items[0].get("id"),
+        )
+        await db.commit()
+
+    return {"items": items, "total": len(matches), "limit": limit, "offset": offset}
+
+
+@api_router.get("/open-roles", response_model=OpenRoleListResponse)
+async def get_open_roles(
+    stage: Optional[str] = None,
+    tech: Optional[str] = None,
+    health_status: Optional[str] = None,
+    activity_window_days: Optional[int] = None,
+    owner_score_band: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.user).selectinload(User.profile))
+        .where(Project.looking_for_help.is_(True))
+    )
+    projects = result.scalars().all()
+    project_ids = [p.id for p in projects]
+    bookmark_counts = await _bookmark_count_map(db, project_ids)
+    activity_map = await _project_activity_map(db, project_ids)
+
+    rows = []
+    for project in projects:
+        if stage and (project.stage.value if project.stage else None) != stage:
+            continue
+        if tech and tech.lower() not in (project.tech_stack or "").lower():
+            continue
+        owner_trust = await _compute_user_trust(db, project.user_id)
+        last_activity = activity_map.get(project.id) or project.updated_at
+        health = compute_project_health(project.stage.value if project.stage else None, last_activity)
+        if health_status and health != health_status:
+            continue
+        if activity_window_days and last_activity:
+            if (datetime.now(timezone.utc) - last_activity).days > activity_window_days:
+                continue
+        if owner_score_band and owner_trust.get("builder_score_band") != owner_score_band:
+            continue
+        payload = project_to_response(
+            project,
+            include_user=True,
+            bookmark_count=bookmark_counts.get(project.id, 0),
+            is_bookmarked=False,
+            last_activity_at=last_activity,
+            owner_trust=owner_trust,
+        )
+        payload["roles_needed"] = _safe_json_list(project.roles_needed_json)
+        payload["owner_score_band"] = owner_trust.get("builder_score_band")
+        payload["owner_score"] = owner_trust.get("builder_score")
+        payload["_rank"] = _open_roles_rank(
+            health_status=payload.get("health_status"),
+            last_activity_at=last_activity,
+            owner_score=owner_trust.get("builder_score"),
+            bookmark_count=payload.get("bookmark_count", 0),
+        )
+        rows.append(payload)
+
+    rows.sort(key=lambda item: item["_rank"], reverse=True)
+    paginated = rows[offset:offset + limit]
+    for item in paginated:
+        item.pop("_rank", None)
+    return {"items": paginated, "total": len(rows), "limit": limit, "offset": offset}
+
+
+@api_router.get("/trending/projects")
+async def get_trending_projects(limit: int = 10, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Project).options(selectinload(Project.user).selectinload(User.profile)))
+    projects = result.scalars().all()
+    project_ids = [p.id for p in projects]
+    bookmark_counts = await _bookmark_count_map(db, project_ids)
+    activity_map = await _project_activity_map(db, project_ids)
+    ranked = []
+    for p in projects:
+        owner_trust = await _compute_user_trust(db, p.user_id)
+        last_activity = activity_map.get(p.id) or p.updated_at
+        health = compute_project_health(p.stage.value if p.stage else None, last_activity)
+        momentum_score = _project_momentum_score(
+            bookmark_count=bookmark_counts.get(p.id, 0),
+            health_status=health,
+            owner_score=owner_trust.get("builder_score"),
+            last_activity_at=last_activity,
+        )
+        payload = project_to_response(
+            p,
+            include_user=True,
+            bookmark_count=bookmark_counts.get(p.id, 0),
+            is_bookmarked=False,
+            last_activity_at=last_activity,
+            owner_trust=owner_trust,
+        )
+        payload["momentum_score"] = momentum_score
+        ranked.append(payload)
+    ranked.sort(key=lambda item: item.get("momentum_score", 0), reverse=True)
+    return {"items": ranked[:limit]}
+
+
+@api_router.get("/trending/builders")
+async def get_trending_builders(limit: int = 10, db: AsyncSession = Depends(get_db)):
+    users_result = await db.execute(select(User).options(selectinload(User.profile)))
+    users = users_result.scalars().all()
+    ranked = []
+    for row in users:
+        trust = await _compute_user_trust(db, row.id)
+        momentum_score = _builder_momentum_score(
+            builder_score=trust.get("builder_score"),
+            receipts_count=trust.get("receipts_count"),
+            last_active_at=trust.get("last_active_at"),
+        )
+        ranked.append({"user": user_to_response(row, trust=trust), "momentum_score": momentum_score})
+    ranked.sort(key=lambda item: item["momentum_score"], reverse=True)
+    return {"items": ranked[:limit]}
 
 
 @api_router.get("/projects/{project_id}")
@@ -1414,7 +2157,7 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db), viewe
     result = await db.execute(
         select(Project)
         .options(
-            selectinload(Project.user),
+            selectinload(Project.user).selectinload(User.profile),
             selectinload(Project.milestones),
             selectinload(Project.updates),
             selectinload(Project.comments),
@@ -1429,7 +2172,18 @@ async def get_project(project_id: str, db: AsyncSession = Depends(get_db), viewe
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     
-    response = project_to_response(project, include_user=True)
+    bookmark_counts = await _bookmark_count_map(db, [project.id])
+    bookmarked_ids = await _bookmarked_ids_for_user(db, viewer.id if viewer else None, [project.id])
+    activity_map = await _project_activity_map(db, [project.id])
+    owner_trust = await _compute_user_trust(db, project.user_id)
+    response = project_to_response(
+        project,
+        include_user=True,
+        bookmark_count=bookmark_counts.get(project.id, 0),
+        is_bookmarked=project.id in bookmarked_ids,
+        last_activity_at=activity_map.get(project.id) or project.updated_at,
+        owner_trust=owner_trust,
+    )
     response["milestones"] = [milestone_to_response(m) for m in project.milestones]
     response["updates_count"] = len(project.updates)
     response["comments_count"] = len(project.comments)
@@ -1547,6 +2301,76 @@ async def refresh_project_repo(project_id: str, user: User = Depends(get_current
     }
 
 
+@api_router.get("/projects/{project_id}/suggested-collaborators", response_model=List[SuggestedCollaboratorResponse])
+async def get_suggested_collaborators(
+    project_id: str,
+    limit: int = 10,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    roles_needed = _safe_json_list(project.roles_needed_json)
+    if not roles_needed:
+        return []
+
+    candidates_result = await db.execute(
+        select(User).options(selectinload(User.profile)).where(User.id != user.id)
+    )
+    candidates = candidates_result.scalars().all()
+    ranked = []
+    for candidate in candidates:
+        profile = candidate.profile
+        if not profile or not profile.skills:
+            continue
+        candidate_skills = _safe_json_list(profile.skills)
+        if not candidate_skills:
+            continue
+        score, matched_skills = match_skills_to_roles(candidate_skills, roles_needed)
+        if score <= 0:
+            continue
+        ranked.append((candidate, score, matched_skills, candidate_skills))
+
+    ranked.sort(key=lambda item: item[1], reverse=True)
+    top = ranked[: max(1, min(limit, 50))]
+
+    response_items = []
+    for candidate, score, matched_skills, candidate_skills in top:
+        trust = await _compute_user_trust(db, candidate.id)
+        response_items.append(
+            {
+                "user_id": candidate.id,
+                "name": candidate.name,
+                "username": candidate.username,
+                "headline": candidate.profile.headline if candidate.profile else None,
+                "skills": candidate_skills,
+                "match_score": score,
+                "matched_skills": matched_skills,
+                "builder_score": trust.get("builder_score"),
+                "builder_score_band": trust.get("builder_score_band"),
+                "completed_projects_count": trust.get("completed_projects_count", 0),
+                "receipts_count": trust.get("receipts_count", 0),
+                "last_active_at": trust.get("last_active_at"),
+            }
+        )
+    if response_items:
+        await _add_notification_if_not_duplicate(
+            db,
+            user_id=user.id,
+            notif_type=NOTIFICATION_TYPE_SUGGESTED_COLLABORATOR,
+            title=f"Suggested collaborators for {project.title}",
+            body=f"{len(response_items)} potential collaborators match your roles.",
+            project_id=project.id,
+        )
+        await db.commit()
+    return response_items
+
+
 @api_router.put("/projects/{project_id}")
 async def update_project(project_id: str, data: ProjectUpdateSchema, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Project).where(Project.id == project_id))
@@ -1574,7 +2398,11 @@ async def update_project(project_id: str, data: ProjectUpdateSchema, user: User 
     await db.commit()
     
     # Reload with user
-    result = await db.execute(select(Project).options(selectinload(Project.user)).where(Project.id == project_id))
+    result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.user).selectinload(User.profile))
+        .where(Project.id == project_id)
+    )
     project = result.scalar_one()
     
     return project_to_response(project, include_user=True)
@@ -1595,7 +2423,11 @@ async def complete_project(project_id: str, background_tasks: BackgroundTasks, u
     project.updated_at = datetime.now(timezone.utc)
     await db.commit()
     
-    result = await db.execute(select(Project).options(selectinload(Project.user)).where(Project.id == project_id))
+    result = await db.execute(
+        select(Project)
+        .options(selectinload(Project.user).selectinload(User.profile))
+        .where(Project.id == project_id)
+    )
     project = result.scalar_one()
     
     # Send congratulations email
@@ -1883,12 +2715,71 @@ async def get_project_activity(project_id: str, db: AsyncSession = Depends(get_d
     return {"items": merge_project_activity(commits, updates, milestones)}
 
 
+@api_router.get("/projects/{project_id}/timeline", response_model=ProjectTimelineResponse)
+async def get_project_timeline(project_id: str, db: AsyncSession = Depends(get_db)):
+    project_result = await db.execute(select(Project).options(selectinload(Project.user), selectinload(Project.repository)).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    updates_result = await db.execute(
+        select(ProjectUpdate).options(selectinload(ProjectUpdate.author)).where(ProjectUpdate.project_id == project_id)
+    )
+    milestones_result = await db.execute(select(Milestone).where(Milestone.project_id == project_id))
+    collabs_result = await db.execute(
+        select(CollaborationRequest).options(selectinload(CollaborationRequest.requester)).where(CollaborationRequest.project_id == project_id)
+    )
+
+    timeline_items = normalize_timeline_events(
+        project={
+            "id": project.id,
+            "created_at": project.created_at.isoformat() if project.created_at else None,
+            "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+            "stage": project.stage.value if project.stage else "idea",
+            "owner_name": project.user.name if project.user else None,
+        },
+        updates=[
+            {
+                "id": u.id,
+                "title": u.title,
+                "update_type": u.update_type.value if u.update_type else "progress",
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "author_name": (u.author.name if u.author else None),
+            }
+            for u in updates_result.scalars().all()
+        ],
+        milestones=[
+            {
+                "id": m.id,
+                "title": m.title,
+                "status": m.status.value if m.status else "planned",
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+                "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+                "creator_name": None,
+            }
+            for m in milestones_result.scalars().all()
+        ],
+        collaborations=[
+            {
+                "id": c.id,
+                "status": c.status.value if c.status else "pending",
+                "message": c.message,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "requester_name": c.requester.name if c.requester else None,
+            }
+            for c in collabs_result.scalars().all()
+        ],
+        repo_sync_at=project.repository.last_synced_at.isoformat() if project.repository and project.repository.last_synced_at else None,
+    )
+    return {"items": timeline_items}
+
+
 # ========== COMMENTS ENDPOINTS ==========
 @api_router.post("/projects/{project_id}/comments")
 async def create_comment(project_id: str, data: CommentCreate, background_tasks: BackgroundTasks, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.user))
+        .options(selectinload(Project.user).selectinload(User.profile))
         .where(Project.id == project_id)
     )
     project = result.scalar_one_or_none()
@@ -1998,7 +2889,7 @@ async def delete_project_comment(
 async def request_collaboration(project_id: str, data: CollaborationRequestCreate, background_tasks: BackgroundTasks, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.user))
+        .options(selectinload(Project.user).selectinload(User.profile))
         .where(Project.id == project_id)
     )
     project = result.scalar_one_or_none()
@@ -2080,8 +2971,13 @@ async def get_collaborators(project_id: str, db: AsyncSession = Depends(get_db))
     )
     collabs = result.scalars().all()
     
-    return {
-        "items": [
+    items = []
+    for c in collabs:
+        requester_payload = None
+        if c.requester:
+            trust = await _compute_user_trust(db, c.requester.id)
+            requester_payload = user_to_response(c.requester, trust=trust)
+        items.append(
             {
                 "id": c.id,
                 "project_id": c.project_id,
@@ -2089,11 +2985,10 @@ async def get_collaborators(project_id: str, db: AsyncSession = Depends(get_db))
                 "message": c.message,
                 "status": c.status.value,
                 "created_at": c.created_at.isoformat() if c.created_at else None,
-                "requester": user_to_response(c.requester) if c.requester else None
+                "requester": requester_payload,
             }
-            for c in collabs
-        ]
-    }
+        )
+    return {"items": items}
 
 
 @api_router.patch("/collaborations/{collab_id}")
@@ -2171,6 +3066,227 @@ async def update_collaboration(
     }
 
 
+@api_router.post("/collaborations/{collab_id}/receipt")
+async def create_receipt_for_collaboration(
+    collab_id: str,
+    data: CollaborationReceiptCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    receipt = await create_collaboration_receipt(
+        db,
+        collaboration_id=collab_id,
+        owner_user_id=user.id,
+        role_title=data.role_title,
+        summary=data.summary,
+    )
+    project_result = await db.execute(select(Project).where(Project.id == receipt.project_id))
+    project = project_result.scalar_one_or_none()
+    await _add_notification_if_not_duplicate(
+        db,
+        user_id=receipt.collaborator_user_id,
+        notif_type=NOTIFICATION_TYPE_RECEIPT_ISSUED,
+        title=f"Collaboration receipt issued for {project.title if project else 'a project'}",
+        body=f"{user.name or user.email.split('@')[0]} acknowledged your contribution.",
+        project_id=receipt.project_id,
+    )
+    await db.commit()
+    return receipt_to_response(receipt, project_title=project.title if project else None)
+
+
+@api_router.get("/users/{user_id}/receipts", response_model=CollaborationReceiptListResponse)
+async def get_user_receipts(
+    user_id: str,
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(CollaborationReceipt)
+        .where(
+            or_(
+                CollaborationReceipt.owner_user_id == user_id,
+                CollaborationReceipt.collaborator_user_id == user_id,
+            )
+        )
+        .order_by(CollaborationReceipt.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = result.scalars().all()
+    project_ids = list({r.project_id for r in rows})
+    project_title_map = {}
+    if project_ids:
+        projects_result = await db.execute(select(Project.id, Project.title).where(Project.id.in_(project_ids)))
+        project_title_map = {pid: title for pid, title in projects_result.all()}
+
+    total_result = await db.execute(
+        select(func.count(CollaborationReceipt.id)).where(
+            or_(
+                CollaborationReceipt.owner_user_id == user_id,
+                CollaborationReceipt.collaborator_user_id == user_id,
+            )
+        )
+    )
+    total = int(total_result.scalar() or 0)
+
+    return {
+        "items": [receipt_to_response(row, project_title=project_title_map.get(row.project_id)) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@api_router.get("/digest/preview", response_model=WeeklyDigestPreviewResponse)
+async def get_digest_preview(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    _ = user
+    open_roles_payload = await get_open_roles(limit=5, offset=0, db=db)
+    trending_projects_payload = await get_trending_projects(limit=5, db=db)
+    trending_builders_payload = await get_trending_builders(limit=5, db=db)
+    milestone_result = await db.execute(
+        select(Milestone, Project.title)
+        .join(Project, Project.id == Milestone.project_id)
+        .where(Milestone.completed.is_(True))
+        .order_by(Milestone.updated_at.desc())
+        .limit(5)
+    )
+    milestones = [
+        {
+            "id": m.id,
+            "title": m.title,
+            "project_id": m.project_id,
+            "project_title": project_title,
+            "completed_at": m.updated_at.isoformat() if m.updated_at else None,
+        }
+        for m, project_title in milestone_result.all()
+    ]
+    return build_weekly_digest_preview(
+        active_projects=trending_projects_payload.get("items", []),
+        open_roles=open_roles_payload.get("items", []),
+        trending_builders=trending_builders_payload.get("items", []),
+        milestone_highlights=milestones,
+    )
+
+
+@api_router.put("/digest/preferences")
+async def update_digest_preferences(
+    payload: DigestPreferenceUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(DigestPreference).where(DigestPreference.user_id == user.id))
+    pref = result.scalar_one_or_none()
+    if pref is None:
+        pref = DigestPreference(user_id=user.id)
+        db.add(pref)
+    if payload.enabled is not None:
+        pref.enabled = payload.enabled
+    if payload.frequency is not None:
+        pref.frequency = payload.frequency
+    if payload.channels is not None:
+        pref.channels_json = json.dumps(payload.channels)
+    await db.commit()
+    return {
+        "user_id": user.id,
+        "enabled": pref.enabled,
+        "frequency": pref.frequency,
+        "channels": _safe_json_list(pref.channels_json),
+    }
+
+
+@api_router.get("/activation/checklist", response_model=ActivationChecklistResponse)
+async def get_activation_checklist(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return await _build_activation_checklist(db, user)
+
+
+@api_router.get("/dashboard/activation-state", response_model=DashboardActivationStateResponse)
+async def get_dashboard_activation_state(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    checklist = await _build_activation_checklist(db, user)
+    profile_result = await db.execute(select(Profile).where(Profile.user_id == user.id))
+    profile = profile_result.scalar_one_or_none()
+    projects_result = await db.execute(select(Project).where(Project.user_id == user.id))
+    projects = projects_result.scalars().all()
+    has_projects = len(projects) > 0
+    project_ids = [p.id for p in projects]
+
+    has_activity = False
+    if project_ids:
+        updates_count_result = await db.execute(select(func.count(ProjectUpdate.id)).where(ProjectUpdate.project_id.in_(project_ids)))
+        has_activity = int(updates_count_result.scalar() or 0) > 0
+
+    skills = _safe_json_list(profile.skills) if profile and profile.skills else []
+    skills_count = len(skills)
+    has_matches = False
+    first_match_count = 0
+    if skills_count > 0:
+        projects_result = await db.execute(select(Project).where(Project.user_id != user.id, Project.looking_for_help.is_(True)))
+        candidate_projects = projects_result.scalars().all()
+        for project in candidate_projects:
+            roles_needed = _safe_json_list(project.roles_needed_json)
+            if not roles_needed:
+                continue
+            score, _ = match_skills_to_roles(skills, roles_needed)
+            if score <= 0:
+                continue
+            first_match_count += 1
+        has_matches = first_match_count > 0
+
+    _ = checklist
+    return {
+        "has_projects": has_projects,
+        "has_matches": has_matches,
+        "has_activity": has_activity,
+        "skills_count": skills_count,
+        "first_match_count": min(first_match_count, 20),
+    }
+
+
+@api_router.get("/projects/{project_id}/share-card", response_model=ProjectShareCardResponse)
+async def get_project_share_card(project_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(Project).options(selectinload(Project.user).selectinload(User.profile)).where(Project.id == project_id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    activity_map = await _project_activity_map(db, [project.id])
+    owner_trust = await _compute_user_trust(db, project.user_id)
+    last_activity = activity_map.get(project.id) or project.updated_at
+    return {
+        "project_id": project.id,
+        "title": project.title,
+        "stage": project.stage.value if project.stage else None,
+        "health_status": compute_project_health(project.stage.value if project.stage else None, last_activity),
+        "roles_needed": _safe_json_list(project.roles_needed_json),
+        "owner_name": project.user.name if project.user else None,
+        "owner_score_band": owner_trust.get("builder_score_band"),
+        "last_activity_at": last_activity.isoformat() if last_activity else None,
+        "share_url": str(request.base_url).rstrip("/") + f"/projects/{project.id}",
+    }
+
+
+@api_router.get("/users/{user_id}/share-card", response_model=ProfileShareCardResponse)
+async def get_user_share_card(user_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).options(selectinload(User.profile)).where(User.id == user_id))
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    trust = await _compute_user_trust(db, row.id)
+    profile = row.profile
+    return {
+        "user_id": row.id,
+        "name": row.name,
+        "username": row.username,
+        "headline": profile.headline if profile else None,
+        "top_skills": (_safe_json_list(profile.skills) if profile else [])[:5],
+        "builder_score_band": trust.get("builder_score_band"),
+        "completed_projects_count": int(trust.get("completed_projects_count") or 0),
+        "receipts_count": int(trust.get("receipts_count") or 0),
+        "share_url": str(request.base_url).rstrip("/") + f"/user/{row.id}",
+    }
+
+
 # ========== NOTIFICATIONS ==========
 @api_router.get("/notifications")
 async def list_notifications(
@@ -2230,7 +3346,9 @@ async def get_feed(limit: int = 20, offset: int = 0, db: AsyncSession = Depends(
     # Get recent project updates with project and user info
     result = await db.execute(
         select(ProjectUpdate)
-        .options(selectinload(ProjectUpdate.project).selectinload(Project.user))
+        .options(
+            selectinload(ProjectUpdate.project).selectinload(Project.user).selectinload(User.profile)
+        )
         .order_by(ProjectUpdate.created_at.desc())
         .offset(offset)
         .limit(limit)
@@ -2265,7 +3383,7 @@ async def get_feed(limit: int = 20, offset: int = 0, db: AsyncSession = Depends(
 async def get_celebration_wall(limit: int = 20, offset: int = 0, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.user))
+        .options(selectinload(Project.user).selectinload(User.profile))
         .where(Project.stage == ProjectStage.completed)
         .order_by(Project.updated_at.desc())
         .offset(offset)
@@ -2308,9 +3426,21 @@ async def get_my_projects(
     query = query.order_by(Project.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     projects = result.scalars().all()
+    project_ids = [p.id for p in projects]
+    bookmark_counts = await _bookmark_count_map(db, project_ids)
+    bookmarked_ids = await _bookmarked_ids_for_user(db, user.id, project_ids)
+    activity_map = await _project_activity_map(db, project_ids)
     
     return {
-        "items": [project_to_response(p) for p in projects]
+        "items": [
+            project_to_response(
+                p,
+                bookmark_count=bookmark_counts.get(p.id, 0),
+                is_bookmarked=p.id in bookmarked_ids,
+                last_activity_at=activity_map.get(p.id) or p.updated_at,
+            )
+            for p in projects
+        ]
     }
 
 
