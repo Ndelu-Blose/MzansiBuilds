@@ -49,10 +49,59 @@ def test_trending_endpoints_are_available(client):
     assert "items" in builders.json()
 
 
+def test_celebration_endpoint_supports_filter_sort_and_spotlight(client):
+    response = client.get("/api/celebration?filter=all&sort=recent&limit=10&offset=0")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "items" in payload
+    assert "summary" in payload
+    assert "spotlight" in payload
+
+
+def test_celebration_endpoint_rejects_invalid_filter_or_sort(client):
+    bad_filter = client.get("/api/celebration?filter=bad")
+    bad_sort = client.get("/api/celebration?sort=bad")
+    assert bad_filter.status_code == 400
+    assert bad_sort.status_code == 400
+
+
+def test_feed_endpoint_supports_tab_query(client):
+    response = client.get("/api/feed?tab=all&limit=10&offset=0")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "items" in payload
+    assert payload.get("tab") == "all"
+
+
+def test_feed_endpoint_rejects_invalid_tab(client):
+    response = client.get("/api/feed?tab=invalid")
+    assert response.status_code == 422
+
+
+def test_reaction_endpoints_require_auth(client):
+    create_response = client.post("/api/projects/test-project-id/reactions", json={"reaction_type": "applaud"})
+    delete_response = client.delete("/api/projects/test-project-id/reactions/applaud")
+    assert create_response.status_code == 401
+    assert delete_response.status_code == 401
+
+
+def test_feed_social_mutations_require_auth(client):
+    create_post = client.post("/api/feed/posts", json={"content": "hello world"})
+    react = client.post("/api/feed/posts/fake-post/reactions", json={"reaction_type": "like"})
+    comment = client.post("/api/feed/posts/fake-post/comments", json={"content": "nice"})
+    follow = client.post("/api/users/fake-user/follow")
+    assert create_post.status_code == 401
+    assert react.status_code == 401
+    assert comment.status_code == 401
+    assert follow.status_code == 401
+
+
 def test_digest_endpoints_require_auth(client):
     preview = client.get("/api/digest/preview")
-    update = client.put("/api/digest/preferences", json={"enabled": True, "frequency": "weekly", "channels": ["in_app"]})
+    preferences = client.get("/api/digest/preferences")
+    update = client.put("/api/digest/preferences", json={"frequency": "weekly", "channels": ["email_digest"]})
     assert preview.status_code == 401
+    assert preferences.status_code == 401
     assert update.status_code == 401
 
 

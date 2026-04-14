@@ -7,7 +7,6 @@ import {
   Send, Users, MessageSquare, Target, Plus, Check,
   Zap, Trophy, Clock, Github, RefreshCw, GitCommitHorizontal, FileText, ShieldCheck, AlertCircle
 } from 'lucide-react';
-import Layout from '../components/Layout';
 import StageBadge from '../components/StageBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -66,6 +65,7 @@ export default function ProjectDetailPage() {
   const [timelineItems, setTimelineItems] = useState([]);
   const [creatingReceiptId, setCreatingReceiptId] = useState(null);
   const [shareCard, setShareCard] = useState(null);
+  const [shareFeedback, setShareFeedback] = useState('');
 
   const isOwner = user && project?.user_id === user.id;
 
@@ -445,198 +445,188 @@ export default function ProjectDetailPage() {
     const url = shareCard?.share_url || `${window.location.origin}/projects/${id}`;
     try {
       await navigator.clipboard.writeText(url);
-      alert('Project link copied.');
+      setShareFeedback('Project link copied to clipboard.');
+      setTimeout(() => setShareFeedback(''), 2500);
     } catch {
-      alert(url);
+      setShareFeedback('Could not copy automatically. Use the link in the share card below.');
+      setTimeout(() => setShareFeedback(''), 3000);
     }
   };
 
   if (loading) {
     return (
-      <Layout>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        </div>
-      </Layout>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
     );
   }
 
   if (!project) {
     return (
-      <Layout>
-        <div className="max-w-7xl mx-auto px-4 py-12 text-center">
-          <p className="text-muted-foreground">Project not found</p>
-        </div>
-      </Layout>
+      <div className="max-w-7xl mx-auto px-4 py-12 text-center">
+        <p className="text-muted-foreground">Project not found</p>
+      </div>
     );
   }
 
   const alreadyRequested = collaborators.some(c => c.requester_user_id === user?.id);
 
+  const completedMilestones = milestones.filter((milestone) => milestone.status === 'done').length
+  const totalMilestones = milestones.length;
+  const milestoneProgress = totalMilestones > 0 ? Math.round((completedMilestones / totalMilestones) * 100) : 0;
+  const remainingMilestones = Math.max(0, totalMilestones - completedMilestones);
+  const nextStepLabel =
+    totalMilestones === 0
+      ? 'Add your first milestone to make progress visible.'
+      : remainingMilestones > 0
+        ? `Complete ${remainingMilestones} remaining milestone${remainingMilestones === 1 ? '' : 's'} to finish this plan.`
+        : 'All milestones completed. Share progress or post an update.';
+
+
   return (
-    <Layout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="project-detail">
-        {/* Back Button */}
-        <button
-          onClick={() => navigate(-1)}
-          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6"
-          data-testid="back-btn"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back
-        </button>
-
-        {/* Project Header */}
-        <div className="bg-card border border-border rounded-xl shadow-card p-6 mb-8">
-          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-            <div className="flex-1">
-              <div className="flex items-center gap-3 mb-2">
-                <StageBadge stage={project.stage} />
-                {healthStatus ? (
-                  <Badge variant="outline" className="font-mono text-[10px] uppercase">
-                    {healthStatus}
-                  </Badge>
-                ) : null}
-                <span className="font-mono text-xs text-muted-foreground">
-                  {formatDate(project.created_at)}
-                </span>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="project-detail">
+        <div className="rounded-2xl border border-border bg-card/90 p-6 md:p-8 mb-8">
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="px-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => navigate(-1)}
+                  data-testid="back-btn"
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Back
+                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StageBadge stage={project.stage} />
+                  {healthStatus ? (
+                    <Badge variant="outline" className="font-mono text-[10px] uppercase">
+                      {healthStatus}
+                    </Badge>
+                  ) : null}
+                  <Badge variant="secondary" className="font-mono text-[10px] uppercase">Assessment workspace</Badge>
+                </div>
+                <h1 className="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">{project.title}</h1>
+                <p className="text-sm text-muted-foreground">Track and complete your project competencies with clearer progress and focused actions.</p>
+                <p className="text-xs text-muted-foreground">Created {formatDate(project.created_at)}{project.last_activity_at ? ` ? Last activity ${formatRelative(project.last_activity_at)}` : ''}</p>
               </div>
-              <h1 className="text-3xl font-bold text-foreground tracking-tight mb-3">
-                {project.title}
-              </h1>
-              {project.import_provenance?.source === 'github' && project.import_provenance.github_repo_full_name && (
-                <p className="text-xs text-muted-foreground mb-3" data-testid="import-provenance-note">
-                  Imported from GitHub ({project.import_provenance.github_repo_full_name}
-                  {project.import_provenance.imported_at
-                    ? ` · ${new Date(project.import_provenance.imported_at).toLocaleString()}`
-                    : ''}
-                  )
-                </p>
-              )}
-              {project.description && (
-                <p className="text-muted-foreground mb-4 max-w-2xl">{project.description}</p>
-              )}
-              
-              {/* Tech Stack */}
-              {project.tech_stack && project.tech_stack.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {project.tech_stack.map((tech, i) => (
-                    <span 
-                      key={i} 
-                      className="font-mono text-xs bg-muted text-foreground px-2 py-1 rounded-md border border-border"
-                    >
-                      {tech}
-                    </span>
-                  ))}
+              <div className="w-full rounded-xl border border-border bg-background/60 p-4 lg:max-w-sm">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium text-foreground">Progress</span>
+                  <span className="font-mono text-foreground">{milestoneProgress}%</span>
                 </div>
-              )}
-
-              {/* Support Needed */}
-              {project.support_needed && (
-                <div className="bg-accent border border-border p-3 rounded-md">
-                  <p className="text-sm text-foreground">
-                    <strong>Looking for:</strong> {project.support_needed}
-                  </p>
+                <div className="mt-2 h-2 rounded-full bg-muted">
+                  <div className="h-2 rounded-full bg-primary transition-all" style={{ width: `${milestoneProgress}%` }} />
                 </div>
-              )}
+                <p className="mt-2 text-xs text-muted-foreground">{completedMilestones} completed ? {remainingMilestones} remaining</p>
+                <p className="mt-1 text-xs text-muted-foreground">Next: {nextStepLabel}</p>
+              </div>
+            </div>
 
-              {/* Owner Info */}
-              {project.user && (
-                <div className="mt-4">
-                  <Link
-                    to={`/user/${project.user.id}`}
-                    className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            {project.import_provenance?.source === 'github' && project.import_provenance.github_repo_full_name && (
+              <p className="text-xs text-muted-foreground" data-testid="import-provenance-note">
+                Imported from GitHub ({project.import_provenance.github_repo_full_name}
+                {project.import_provenance.imported_at
+                  ? ` ? ${new Date(project.import_provenance.imported_at).toLocaleString()}`
+                  : ''}
+                )
+              </p>
+            )}
+
+            {project.description && <p className="max-w-4xl text-sm text-muted-foreground">{project.description}</p>}
+
+            {project.tech_stack && project.tech_stack.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {project.tech_stack.map((tech, i) => (
+                  <span
+                    key={i}
+                    className="rounded-md border border-border bg-background/70 px-2.5 py-1 text-xs font-mono text-foreground"
                   >
-                    <div className="w-6 h-6 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
-                      {project.user.name?.[0]?.toUpperCase() || project.user.email?.[0]?.toUpperCase()}
-                    </div>
-                    {project.user.name || project.user.email?.split('@')[0]}
-                  </Link>
-                  <div className="mt-2">
-                    <TrustSignalsRow
-                      band={project.user.builder_score_band}
-                      completedProjects={project.user.completed_projects_count}
-                      receipts={project.user.receipts_count}
-                      lastActiveAt={project.user.last_active_at}
-                    />
-                  </div>
-                </div>
-              )}
+                    {tech}
+                  </span>
+                ))}
+              </div>
+            )}
 
-              {project.verification_status && (
-                <div className="mt-3">
+            {project.support_needed && (
+              <div className="rounded-lg border border-border bg-background/50 p-3">
+                <p className="text-sm text-foreground">
+                  <strong>Looking for:</strong> {project.support_needed}
+                </p>
+              </div>
+            )}
+
+            {project.user && (
+              <div className="space-y-2">
+                <Link
+                  to={`/user/${project.user.id}`}
+                  className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground">
+                    {project.user.name?.[0]?.toUpperCase() || project.user.email?.[0]?.toUpperCase()}
+                  </div>
+                  {project.user.name || project.user.email?.split('@')[0]}
+                </Link>
+                <TrustSignalsRow
+                  band={project.user.builder_score_band}
+                  completedProjects={project.user.completed_projects_count}
+                  receipts={project.user.receipts_count}
+                  lastActiveAt={project.user.last_active_at}
+                />
+                {project.verification_status && (
                   <Badge variant={badgeVariantForStatus(project.verification_status)} className="font-mono">
                     {humanize(project.verification_status)}
                   </Badge>
-                </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
+              {isOwner ? (
+                <>
+                  {project.stage !== 'completed' && (
+                    <Button type="button" onClick={handleCompleteProject} data-testid="complete-project-btn">
+                      <Trophy className="mr-2 h-4 w-4" />
+                      Mark Complete
+                    </Button>
+                  )}
+                  <Button type="button" asChild variant="outline" data-testid="edit-project-btn">
+                    <Link to={`/projects/${id}/edit`}>
+                      <Edit2 className="mr-2 h-4 w-4" />
+                      Edit
+                    </Link>
+                  </Button>
+                  <Button type="button" variant="destructive" onClick={handleDeleteProject} data-testid="delete-project-btn">
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </Button>
+                  {project.repo_connected && (
+                    <Button type="button" variant="outline" onClick={handleRefreshRepo} disabled={isRefreshingRepo}>
+                      {isRefreshingRepo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                      {isRefreshingRepo ? 'Refreshing...' : 'Refresh Repo'}
+                    </Button>
+                  )}
+                </>
+              ) : (
+                isAuthenticated && (
+                  <Button type="button" variant="outline" onClick={handleToggleBookmark} disabled={bookmarkBusy}>
+                    {project.is_bookmarked ? 'Bookmarked' : 'Bookmark'}
+                    <Badge variant="outline" className="ml-2 font-mono">{project.bookmark_count || 0}</Badge>
+                  </Button>
+                )
               )}
             </div>
-
-            {/* Actions */}
-            {isOwner && (
-              <div className="flex flex-wrap gap-2">
-                {project.stage !== 'completed' && (
-                  <button
-                    type="button"
-                    onClick={handleCompleteProject}
-                    className="bg-accent text-primary border border-primary/30 px-4 py-2 rounded-md hover:bg-accent/80 transition-colors flex items-center gap-2 font-medium"
-                    data-testid="complete-project-btn"
-                  >
-                    <Trophy className="w-4 h-4" />
-                    Mark Complete
-                  </button>
-                )}
-                <Link
-                  to={`/projects/${id}/edit`}
-                  className="bg-secondary text-secondary-foreground px-4 py-2 rounded-md hover:bg-muted border border-border transition-colors flex items-center gap-2"
-                  data-testid="edit-project-btn"
-                >
-                  <Edit2 className="w-4 h-4" />
-                  Edit
-                </Link>
-                <button
-                  onClick={handleDeleteProject}
-                  className="bg-red-500/10 text-red-400 border border-red-500/20 px-4 py-2 rounded-sm hover:bg-red-500/20 transition-colors flex items-center gap-2"
-                  data-testid="delete-project-btn"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete
-                </button>
-                {project.repo_connected && (
-                  <button
-                    type="button"
-                    onClick={handleRefreshRepo}
-                    disabled={isRefreshingRepo}
-                    className="bg-secondary text-secondary-foreground px-4 py-2 rounded-md hover:bg-muted border border-border transition-colors flex items-center gap-2"
-                  >
-                    {isRefreshingRepo ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    {isRefreshingRepo ? 'Refreshing...' : 'Refresh Repo'}
-                  </button>
-                )}
-              </div>
-            )}
-            {!isOwner && isAuthenticated && (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={handleToggleBookmark}
-                  disabled={bookmarkBusy}
-                  className="bg-secondary text-secondary-foreground px-4 py-2 rounded-md hover:bg-muted border border-border transition-colors flex items-center gap-2 disabled:opacity-50"
-                >
-                  {project.is_bookmarked ? 'Bookmarked' : 'Bookmark'}
-                  <Badge variant="outline" className="font-mono">{project.bookmark_count || 0}</Badge>
-                </button>
-              </div>
-            )}
           </div>
         </div>
 
         {/* Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[260px_minmax(0,1fr)]">
           {/* Main Content */}
-          <div className="lg:col-span-2 space-y-8">
+          <div className="order-2 space-y-6 lg:order-2">
             {project.repo_summary && (
-              <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <div id="repo" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
                 <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
                   <Github className="w-5 h-5 text-primary" />
                   Repository Truth
@@ -669,7 +659,7 @@ export default function ProjectDetailPage() {
               </div>
             )}
 
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div id="readme" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h2 className="text-xl font-semibold text-foreground mb-3 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-primary" />
                 README Preview
@@ -682,7 +672,7 @@ export default function ProjectDetailPage() {
             </div>
 
             {/* Updates Section */}
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div id="updates" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Zap className="w-5 h-5 text-primary" />
                 Updates
@@ -825,7 +815,7 @@ export default function ProjectDetailPage() {
             </div>
 
             {/* Milestones */}
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div id="milestones" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Target className="w-5 h-5 text-primary" />
                 Milestones
@@ -928,7 +918,7 @@ export default function ProjectDetailPage() {
               )}
             </div>
 
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4">Activity</h3>
               {activityItems.length === 0 ? (
                 <div className="text-center py-6">
@@ -953,13 +943,13 @@ export default function ProjectDetailPage() {
               )}
             </div>
 
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div id="timeline" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4">Build Timeline</h3>
               <ProjectTimeline items={timelineItems} />
             </div>
 
             {/* Comments Section */}
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div id="comments" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
                 <MessageSquare className="w-5 h-5 text-primary" />
                 Comments ({comments.length})
@@ -1032,9 +1022,22 @@ export default function ProjectDetailPage() {
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-6">
+          <div className="order-1 space-y-6 lg:order-1 lg:sticky lg:top-24 lg:self-start">
+            <div className="rounded-xl border border-border bg-card p-4 ring-1 ring-border/40">
+              <h3 className="text-sm font-semibold text-foreground mb-3">Workspace sections</h3>
+              <nav className="space-y-2 text-sm">
+                <a href="#repo" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Repository</a>
+                <a href="#readme" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">README</a>
+                <a href="#updates" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Updates</a>
+                <a href="#milestones" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Milestones</a>
+                <a href="#timeline" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Timeline</a>
+                <a href="#comments" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Comments</a>
+                <a href="#collaboration" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Collaboration</a>
+              </nav>
+            </div>
+
             {project.repo_connected && (
-              <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
                 <h3 className="font-semibold text-foreground mb-3">Sync Status</h3>
                 <p className="text-sm text-muted-foreground mb-2">
                   Last synced: {project.last_synced_at ? formatDate(project.last_synced_at) : 'Not synced yet'}
@@ -1050,7 +1053,7 @@ export default function ProjectDetailPage() {
               </div>
             )}
 
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-3">Project Health</h3>
               <Badge variant="outline" className="font-mono uppercase">{healthStatus || 'unknown'}</Badge>
               <p className="text-sm text-muted-foreground mt-2">
@@ -1058,15 +1061,16 @@ export default function ProjectDetailPage() {
               </p>
             </div>
 
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-foreground">Share Project</h3>
                 <Button type="button" variant="outline" size="sm" onClick={handleShareProject}>Copy Link</Button>
               </div>
+              {shareFeedback ? <p className="mb-3 text-xs text-primary">{shareFeedback}</p> : null}
               <ProjectShareCard card={shareCard} />
             </div>
 
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Users className="w-5 h-5 text-primary" />
                 Contributors
@@ -1101,7 +1105,7 @@ export default function ProjectDetailPage() {
               )}
             </div>
 
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4">Key Files</h3>
               {(project.key_file_highlights || []).length === 0 ? (
                 <div>
@@ -1123,7 +1127,7 @@ export default function ProjectDetailPage() {
             </div>
 
             {project.recent_commits?.length > 0 && (
-              <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
                 <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
                   <GitCommitHorizontal className="w-5 h-5 text-primary" />
                   Recent Commits
@@ -1140,7 +1144,7 @@ export default function ProjectDetailPage() {
             )}
 
             {/* Collaboration */}
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
+            <div id="collaboration" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Users className="w-5 h-5 text-primary" />
                 Collaboration
@@ -1227,7 +1231,7 @@ export default function ProjectDetailPage() {
             </div>
 
             {isOwner && (
-              <div className="bg-card border border-border rounded-xl shadow-card p-6">
+              <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
                 <h3 className="font-semibold text-foreground mb-4">Suggested Collaborators</h3>
                 {suggestedCollaborators.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
@@ -1244,7 +1248,6 @@ export default function ProjectDetailPage() {
             )}
           </div>
         </div>
-      </div>
-    </Layout>
+    </div>
   );
 }

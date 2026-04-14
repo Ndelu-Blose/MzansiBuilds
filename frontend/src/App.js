@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import Layout from './components/Layout';
 
 // Pages
 import LandingPage from './pages/LandingPage';
@@ -17,6 +18,10 @@ import ProfilePage from './pages/ProfilePage';
 import ExplorePage from './pages/ExplorePage';
 import UserProfilePage from './pages/UserProfilePage';
 import OpenRolesPage from './pages/OpenRolesPage';
+import MyProjectsPage from './pages/MyProjectsPage';
+import CollaborationRequestsPage from './pages/CollaborationRequestsPage';
+import NotificationsPage from './pages/NotificationsPage';
+import SettingsPage from './pages/SettingsPage';
 
 import './index.css';
 
@@ -30,24 +35,24 @@ function App() {
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route path="/auth/confirmed" element={<EmailConfirmedPage />} />
           <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
-          <Route path="/feed" element={<FeedPage />} />
-          <Route path="/celebration" element={<CelebrationPage />} />
-          <Route path="/explore" element={<ExplorePage />} />
-          <Route path="/open-roles" element={<OpenRolesPage />} />
-          <Route path="/projects/:id" element={<ProjectDetailPage />} />
-          <Route path="/user/:id" element={<UserProfilePage />} />
-          
-          {/* Protected Routes */}
-          <Route path="/dashboard" element={
-            <ProtectedRoute>
-              <DashboardPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/profile" element={
-            <ProtectedRoute>
-              <ProfilePage />
-            </ProtectedRoute>
-          } />
+
+          <Route element={<Layout />}>
+            <Route path="/feed" element={<FeedPage />} />
+            <Route path="/celebration" element={<CelebrationPage />} />
+            <Route path="/explore" element={<ExplorePage />} />
+            <Route path="/open-roles" element={<OpenRolesPage />} />
+            <Route path="/projects/:id" element={<ProjectDetailPage />} />
+            <Route path="/user/:id" element={<UserProfilePage />} />
+
+            <Route element={<ProtectedRoute />}>
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/my-projects" element={<MyProjectsPage />} />
+              <Route path="/collaboration-requests" element={<CollaborationRequestsPage />} />
+              <Route path="/notifications" element={<NotificationsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+          </Route>
         </Routes>
       </AuthProvider>
     </BrowserRouter>

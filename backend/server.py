@@ -8,7 +8,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, and_
+from sqlalchemy import select, func, or_, and_, case
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from cachetools import TTLCache
@@ -21,7 +21,7 @@ import json
 import re
 import httpx
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict
 from jwt import PyJWKClient
 
 from database import get_db, engine, Base, AsyncSessionLocal
@@ -31,7 +31,8 @@ from models import (
     ProjectStage, CollaborationStatus, ConnectedAccount, ConnectedProvider,
     ProjectRepository, ProjectLanguage, ProjectCommit, ProjectContributor, ProjectFileHighlight,
     RepoProvider, OwnershipType, VerificationStatus, ProjectType, ProjectUpdateType, MilestoneStatus,
-    Notification, ProjectBookmark, CollaborationReceipt, DigestPreference,
+    Notification, ProjectBookmark, CollaborationReceipt, DigestPreference, ProjectReaction, ProjectReactionType,
+    FeedPost, FeedPostReaction, FeedComment, UserFollowing, FeedPostType, FeedReactionType,
 )
 from schemas import (
     UserCreate, UserLogin, UserResponse, UserWithProfile,
@@ -44,6 +45,8 @@ from schemas import (
     CollaborationRequestCreate, CollaborationRequestUpdate, 
     CollaborationRequestResponse, CollaborationRequestWithRequester,
     FeedItem, FeedResponse, AuthResponse, TokenResponse,
+    FeedListResponse, FeedTabEnum, FeedPostCreateRequest, FeedReactionUpdateRequest, FeedReactionUpdateResponse,
+    FeedCommentCreateRequest, FeedPostTypeEnum, FeedReactionTypeEnum, FeedPostItemResponse, FeedCommentItemResponse,
     ForgotPasswordRequest, ResetPasswordRequest,
     ProjectStageEnum, CollaborationStatusEnum, GitHubConnectStartResponse,
     GitHubAccountResponse,
@@ -62,10 +65,14 @@ from schemas import (
     TrendingBuilderItemResponse,
     WeeklyDigestPreviewResponse,
     DigestPreferenceUpdate,
+    DigestPreferenceResponse,
     ActivationChecklistResponse,
     DashboardActivationStateResponse,
     ProjectShareCardResponse,
     ProfileShareCardResponse,
+    CelebrationListResponse,
+    ProjectReactionUpdateRequest,
+    ProjectReactionUpdateResponse,
 )
 from github_oauth_service import (
     build_authorization_url, exchange_code_for_token, fetch_authenticated_profile,
@@ -3205,29 +3212,77 @@ async def get_digest_preview(user: User = Depends(get_current_user), db: AsyncSe
     )
 
 
-@api_router.put("/digest/preferences")
+@api_router.put("/digest/preferences", response_model=DigestPreferenceResponse)
 async def update_digest_preferences(
     payload: DigestPreferenceUpdate,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    allowed_channels = {"email_digest", "comment_emails"}
+
+    def _normalize_channels(values: Optional[List[str]]) -> List[str]:
+        if not values:
+            return []
+        cleaned = []
+        for value in values:
+            normalized = str(value).strip().lower()
+            if normalized and normalized in allowed_channels:
+                cleaned.append(normalized)
+        return list(dict.fromkeys(cleaned))
+
     result = await db.execute(select(DigestPreference).where(DigestPreference.user_id == user.id))
     pref = result.scalar_one_or_none()
     if pref is None:
         pref = DigestPreference(user_id=user.id)
         db.add(pref)
-    if payload.enabled is not None:
-        pref.enabled = payload.enabled
     if payload.frequency is not None:
         pref.frequency = payload.frequency
     if payload.channels is not None:
-        pref.channels_json = json.dumps(payload.channels)
+        pref.channels_json = json.dumps(_normalize_channels(payload.channels))
+    normalized_channels = _normalize_channels(_safe_json_list(pref.channels_json))
+    pref.channels_json = json.dumps(normalized_channels)
+    pref.enabled = len(normalized_channels) > 0
+    if pref.frequency not in ("weekly", "biweekly"):
+        pref.frequency = "weekly"
     await db.commit()
     return {
         "user_id": user.id,
-        "enabled": pref.enabled,
         "frequency": pref.frequency,
-        "channels": _safe_json_list(pref.channels_json),
+        "channels": normalized_channels,
+    }
+
+
+@api_router.get("/digest/preferences", response_model=DigestPreferenceResponse)
+async def get_digest_preferences(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    allowed_channels = {"email_digest", "comment_emails"}
+
+    def _normalize_channels(values: Optional[List[str]]) -> List[str]:
+        if not values:
+            return []
+        cleaned = []
+        for value in values:
+            normalized = str(value).strip().lower()
+            if normalized and normalized in allowed_channels:
+                cleaned.append(normalized)
+        return list(dict.fromkeys(cleaned))
+
+    result = await db.execute(select(DigestPreference).where(DigestPreference.user_id == user.id))
+    pref = result.scalar_one_or_none()
+    if pref is None:
+        return {
+            "user_id": user.id,
+            "frequency": "weekly",
+            "channels": ["email_digest", "comment_emails"],
+        }
+    channels = _normalize_channels(_safe_json_list(pref.channels_json))
+    frequency = pref.frequency if pref.frequency in ("weekly", "biweekly") else "weekly"
+    return {
+        "user_id": user.id,
+        "frequency": frequency,
+        "channels": channels or ["email_digest", "comment_emails"],
     }
 
 
@@ -3328,6 +3383,7 @@ async def get_user_share_card(user_id: str, request: Request, db: AsyncSession =
 async def list_notifications(
     limit: int = 20,
     offset: int = 0,
+    unread_only: bool = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -3338,9 +3394,11 @@ async def list_notifications(
         )
     )
     unread_count = int(unread_result.scalar() or 0)
+    query = select(Notification).where(Notification.user_id == user.id)
+    if unread_only:
+        query = query.where(Notification.read_at.is_(None))
     result = await db.execute(
-        select(Notification)
-        .where(Notification.user_id == user.id)
+        query
         .order_by(Notification.created_at.desc())
         .offset(offset)
         .limit(limit)
@@ -3351,6 +3409,7 @@ async def list_notifications(
         "unread_count": unread_count,
         "limit": limit,
         "offset": offset,
+        "unread_only": unread_only,
     }
 
 
@@ -3376,68 +3435,771 @@ async def mark_notification_read(
     return notification_to_response(row)
 
 
-# ========== FEED ENDPOINT ==========
-@api_router.get("/feed")
-async def get_feed(limit: int = 20, offset: int = 0, db: AsyncSession = Depends(get_db)):
-    # Get recent project updates with project and user info
+@api_router.patch("/notifications/read-all")
+async def mark_all_notifications_read(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
-        select(ProjectUpdate)
-        .options(
-            selectinload(ProjectUpdate.project).selectinload(Project.user).selectinload(User.profile)
+        select(Notification).where(
+            Notification.user_id == user.id,
+            Notification.read_at.is_(None),
         )
-        .order_by(ProjectUpdate.created_at.desc())
-        .offset(offset)
-        .limit(limit)
     )
-    updates = result.scalars().all()
-    
-    # Count total
-    count_result = await db.execute(select(func.count(ProjectUpdate.id)))
-    total = count_result.scalar()
-    
-    items = []
-    for u in updates:
-        if u.project:
-            items.append({
-                "id": u.id,
-                "type": "update",
-                "content": f"{u.title}\n\n{u.body}",
-                "project": project_to_response(u.project, include_user=True),
-                "created_at": u.created_at.isoformat() if u.created_at else None
-            })
-    
+    rows = result.scalars().all()
+    now = datetime.now(timezone.utc)
+    updated = 0
+    for row in rows:
+        row.read_at = now
+        updated += 1
+    if updated > 0:
+        await db.commit()
+    return {"updated": updated}
+
+
+# ========== FEED ENDPOINT ==========
+def _feed_reaction_type_key(value: FeedReactionType) -> str:
+    return value.value if isinstance(value, FeedReactionType) else str(value)
+
+
+async def _feed_reaction_counts_for_posts(db: AsyncSession, post_ids: List[str]) -> Dict[str, Dict[str, int]]:
+    counts = {pid: {"like": 0, "applaud": 0, "inspired": 0} for pid in post_ids}
+    if not post_ids:
+        return counts
+    result = await db.execute(
+        select(FeedPostReaction.post_id, FeedPostReaction.reaction_type, func.count(FeedPostReaction.id))
+        .where(FeedPostReaction.post_id.in_(post_ids))
+        .group_by(FeedPostReaction.post_id, FeedPostReaction.reaction_type)
+    )
+    for post_id, reaction_type, count in result.all():
+        key = _feed_reaction_type_key(reaction_type)
+        if post_id in counts and key in counts[post_id]:
+            counts[post_id][key] = int(count or 0)
+    return counts
+
+
+async def _feed_viewer_reactions_for_posts(
+    db: AsyncSession, post_ids: List[str], viewer_id: Optional[str]
+) -> Dict[str, Dict[str, bool]]:
+    flags = {pid: {"liked": False, "applauded": False, "inspired": False} for pid in post_ids}
+    if not post_ids or not viewer_id:
+        return flags
+    result = await db.execute(
+        select(FeedPostReaction.post_id, FeedPostReaction.reaction_type).where(
+            FeedPostReaction.post_id.in_(post_ids), FeedPostReaction.user_id == viewer_id
+        )
+    )
+    for post_id, reaction_type in result.all():
+        key = _feed_reaction_type_key(reaction_type)
+        if post_id not in flags:
+            continue
+        if key == "like":
+            flags[post_id]["liked"] = True
+        elif key == "applaud":
+            flags[post_id]["applauded"] = True
+        elif key == "inspired":
+            flags[post_id]["inspired"] = True
+    return flags
+
+
+async def _feed_comments_for_posts(
+    db: AsyncSession, post_ids: List[str]
+) -> tuple[Dict[str, int], Dict[str, List[dict]]]:
+    count_map = {pid: 0 for pid in post_ids}
+    comments_map: Dict[str, List[dict]] = {pid: [] for pid in post_ids}
+    if not post_ids:
+        return count_map, comments_map
+
+    count_result = await db.execute(
+        select(FeedComment.post_id, func.count(FeedComment.id))
+        .where(FeedComment.post_id.in_(post_ids))
+        .group_by(FeedComment.post_id)
+    )
+    for post_id, count in count_result.all():
+        count_map[post_id] = int(count or 0)
+
+    comments_result = await db.execute(
+        select(FeedComment)
+        .options(selectinload(FeedComment.user).selectinload(User.profile))
+        .where(FeedComment.post_id.in_(post_ids))
+        .order_by(FeedComment.created_at.desc())
+    )
+    for row in comments_result.scalars().all():
+        current = comments_map.get(row.post_id, [])
+        if len(current) >= 3:
+            continue
+        current.append(
+            {
+                "id": row.id,
+                "post_id": row.post_id,
+                "user_id": row.user_id,
+                "content": row.content,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "user": {
+                    "id": row.user.id if row.user else row.user_id,
+                    "name": row.user.name if row.user else None,
+                    "username": row.user.username if row.user else None,
+                    "picture": row.user.picture if row.user else None,
+                },
+            }
+        )
+        comments_map[row.post_id] = current
+    return count_map, comments_map
+
+
+def _feed_post_to_response(
+    post: FeedPost,
+    *,
+    reaction_counts: Dict[str, int],
+    viewer_reactions: Dict[str, bool],
+    comments_count: int,
+    recent_comments: List[dict],
+) -> dict:
     return {
-        "items": items,
-        "total": total,
-        "limit": limit,
-        "offset": offset
+        "id": post.id,
+        "activity_type": post.activity_type.value if post.activity_type else FeedPostTypeEnum.update.value,
+        "content": post.content,
+        "tags": _safe_json_list(post.tags_json),
+        "created_at": post.created_at.isoformat() if post.created_at else None,
+        "updated_at": post.updated_at.isoformat() if post.updated_at else None,
+        "author": {
+            "id": post.author.id if post.author else post.author_user_id,
+            "name": post.author.name if post.author else None,
+            "username": post.author.username if post.author else None,
+            "picture": post.author.picture if post.author else None,
+        },
+        "project": (
+            {
+                "id": post.project.id,
+                "title": post.project.title,
+                "stage": post.project.stage.value if post.project.stage else None,
+            }
+            if post.project
+            else None
+        ),
+        "reactions": {
+            "like": int(reaction_counts.get("like", 0)),
+            "applaud": int(reaction_counts.get("applaud", 0)),
+            "inspired": int(reaction_counts.get("inspired", 0)),
+        },
+        "viewer_reactions": {
+            "liked": bool(viewer_reactions.get("liked", False)),
+            "applauded": bool(viewer_reactions.get("applauded", False)),
+            "inspired": bool(viewer_reactions.get("inspired", False)),
+        },
+        "comments_count": int(comments_count or 0),
+        "recent_comments": recent_comments or [],
     }
 
 
-# ========== CELEBRATION WALL ENDPOINT ==========
-@api_router.get("/celebration")
-async def get_celebration_wall(limit: int = 20, offset: int = 0, db: AsyncSession = Depends(get_db)):
+async def _following_user_ids(db: AsyncSession, user_id: str) -> List[str]:
     result = await db.execute(
-        select(Project)
-        .options(selectinload(Project.user).selectinload(User.profile))
-        .where(Project.stage == ProjectStage.completed)
-        .order_by(Project.updated_at.desc())
+        select(UserFollowing.following_user_id).where(UserFollowing.follower_user_id == user_id)
+    )
+    return [row[0] for row in result.all()]
+
+
+@api_router.get("/feed", response_model=FeedListResponse)
+async def get_feed(
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    tab: FeedTabEnum = Query(default=FeedTabEnum.all),
+    viewer: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
+        select(FeedPost)
+        .options(
+            selectinload(FeedPost.author).selectinload(User.profile),
+            selectinload(FeedPost.project),
+        )
+    )
+
+    if tab == FeedTabEnum.following:
+        if not viewer:
+            return {"items": [], "total": 0, "limit": limit, "offset": offset, "tab": tab}
+        ids = await _following_user_ids(db, viewer.id)
+        if not ids:
+            return {"items": [], "total": 0, "limit": limit, "offset": offset, "tab": tab}
+        query = query.where(FeedPost.author_user_id.in_(ids))
+    elif tab == FeedTabEnum.my_projects:
+        if not viewer:
+            return {"items": [], "total": 0, "limit": limit, "offset": offset, "tab": tab}
+        query = query.where(
+            or_(
+                FeedPost.author_user_id == viewer.id,
+                FeedPost.project_id.in_(select(Project.id).where(Project.user_id == viewer.id)),
+            )
+        )
+    elif tab == FeedTabEnum.completed:
+        query = query.where(FeedPost.activity_type == FeedPostType.completed)
+
+    count_subquery = query.subquery()
+    count_result = await db.execute(select(func.count()).select_from(count_subquery))
+    total = int(count_result.scalar() or 0)
+
+    if tab == FeedTabEnum.trending:
+        result = await db.execute(query.order_by(FeedPost.created_at.desc()).limit(200))
+        posts = result.scalars().all()
+    else:
+        result = await db.execute(query.order_by(FeedPost.created_at.desc()).offset(offset).limit(limit))
+        posts = result.scalars().all()
+
+    post_ids = [p.id for p in posts]
+    reaction_counts_map = await _feed_reaction_counts_for_posts(db, post_ids)
+    viewer_reactions_map = await _feed_viewer_reactions_for_posts(db, post_ids, viewer.id if viewer else None)
+    comments_count_map, recent_comments_map = await _feed_comments_for_posts(db, post_ids)
+
+    if tab == FeedTabEnum.trending:
+        now = datetime.now(timezone.utc)
+        posts.sort(
+            key=lambda post: (
+                reaction_counts_map.get(post.id, {}).get("like", 0) * 2
+                + reaction_counts_map.get(post.id, {}).get("applaud", 0) * 3
+                + reaction_counts_map.get(post.id, {}).get("inspired", 0) * 2
+                + comments_count_map.get(post.id, 0) * 2
+                - max(0, int((now - (post.created_at or now)).total_seconds() // 3600)) // 6
+            ),
+            reverse=True,
+        )
+        posts = posts[offset : offset + limit]
+
+    return {
+        "items": [
+            _feed_post_to_response(
+                post,
+                reaction_counts=reaction_counts_map.get(post.id, {}),
+                viewer_reactions=viewer_reactions_map.get(post.id, {}),
+                comments_count=comments_count_map.get(post.id, 0),
+                recent_comments=recent_comments_map.get(post.id, []),
+            )
+            for post in posts
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "tab": tab.value,
+    }
+
+
+@api_router.post("/feed/posts", response_model=FeedPostItemResponse)
+async def create_feed_post(
+    payload: FeedPostCreateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project_id = payload.project_id
+    if project_id:
+        project_result = await db.execute(select(Project).where(Project.id == project_id))
+        project = project_result.scalar_one_or_none()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+    post = FeedPost(
+        author_user_id=user.id,
+        project_id=project_id,
+        activity_type=FeedPostType(payload.activity_type.value),
+        content=payload.content.strip(),
+        tags_json=json.dumps(payload.tags or []),
+    )
+    db.add(post)
+    await db.commit()
+    await db.refresh(post)
+    result = await db.execute(
+        select(FeedPost)
+        .options(selectinload(FeedPost.author), selectinload(FeedPost.project))
+        .where(FeedPost.id == post.id)
+    )
+    row = result.scalar_one()
+    return _feed_post_to_response(
+        row,
+        reaction_counts={"like": 0, "applaud": 0, "inspired": 0},
+        viewer_reactions={"liked": False, "applauded": False, "inspired": False},
+        comments_count=0,
+        recent_comments=[],
+    )
+
+
+@api_router.post("/feed/posts/{post_id}/reactions", response_model=FeedReactionUpdateResponse)
+async def add_feed_post_reaction(
+    post_id: str,
+    payload: FeedReactionUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    post_result = await db.execute(select(FeedPost).where(FeedPost.id == post_id))
+    post = post_result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Feed post not found")
+
+    reaction_type = FeedReactionType(payload.reaction_type.value)
+    existing_result = await db.execute(
+        select(FeedPostReaction).where(
+            FeedPostReaction.post_id == post_id,
+            FeedPostReaction.user_id == user.id,
+            FeedPostReaction.reaction_type == reaction_type,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if not existing:
+        db.add(FeedPostReaction(post_id=post_id, user_id=user.id, reaction_type=reaction_type))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+
+    counts = await _feed_reaction_counts_for_posts(db, [post_id])
+    flags = await _feed_viewer_reactions_for_posts(db, [post_id], user.id)
+    return {"post_id": post_id, "reactions": counts.get(post_id, {}), "viewer_reactions": flags.get(post_id, {})}
+
+
+@api_router.delete("/feed/posts/{post_id}/reactions/{reaction_type}", response_model=FeedReactionUpdateResponse)
+async def remove_feed_post_reaction(
+    post_id: str,
+    reaction_type: FeedReactionTypeEnum,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    existing_result = await db.execute(
+        select(FeedPostReaction).where(
+            FeedPostReaction.post_id == post_id,
+            FeedPostReaction.user_id == user.id,
+            FeedPostReaction.reaction_type == FeedReactionType(reaction_type.value),
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing:
+        await db.delete(existing)
+        await db.commit()
+
+    counts = await _feed_reaction_counts_for_posts(db, [post_id])
+    flags = await _feed_viewer_reactions_for_posts(db, [post_id], user.id)
+    return {"post_id": post_id, "reactions": counts.get(post_id, {}), "viewer_reactions": flags.get(post_id, {})}
+
+
+@api_router.get("/feed/posts/{post_id}/comments", response_model=List[FeedCommentItemResponse])
+async def list_feed_post_comments(
+    post_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    post_result = await db.execute(select(FeedPost.id).where(FeedPost.id == post_id))
+    if not post_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Feed post not found")
+
+    result = await db.execute(
+        select(FeedComment)
+        .options(selectinload(FeedComment.user))
+        .where(FeedComment.post_id == post_id)
+        .order_by(FeedComment.created_at.desc())
         .offset(offset)
         .limit(limit)
     )
-    projects = result.scalars().all()
-    
-    count_result = await db.execute(
-        select(func.count(Project.id))
+    rows = result.scalars().all()
+    return [
+        {
+            "id": row.id,
+            "post_id": row.post_id,
+            "user_id": row.user_id,
+            "content": row.content,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "user": {
+                "id": row.user.id if row.user else row.user_id,
+                "name": row.user.name if row.user else None,
+                "username": row.user.username if row.user else None,
+                "picture": row.user.picture if row.user else None,
+            },
+        }
+        for row in rows
+    ]
+
+
+@api_router.post("/feed/posts/{post_id}/comments", response_model=FeedCommentItemResponse)
+async def create_feed_post_comment(
+    post_id: str,
+    payload: FeedCommentCreateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    post_result = await db.execute(select(FeedPost).where(FeedPost.id == post_id))
+    post = post_result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Feed post not found")
+
+    comment = FeedComment(post_id=post_id, user_id=user.id, content=payload.content.strip())
+    db.add(comment)
+    await db.commit()
+    await db.refresh(comment)
+
+    result = await db.execute(select(FeedComment).options(selectinload(FeedComment.user)).where(FeedComment.id == comment.id))
+    row = result.scalar_one()
+    return {
+        "id": row.id,
+        "post_id": row.post_id,
+        "user_id": row.user_id,
+        "content": row.content,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "user": {
+            "id": row.user.id if row.user else row.user_id,
+            "name": row.user.name if row.user else None,
+            "username": row.user.username if row.user else None,
+            "picture": row.user.picture if row.user else None,
+        },
+    }
+
+
+@api_router.post("/users/{user_id}/follow")
+async def follow_user(
+    user_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if user.id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot follow yourself")
+    target_result = await db.execute(select(User.id).where(User.id == user_id))
+    if not target_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="User not found")
+
+    existing_result = await db.execute(
+        select(UserFollowing).where(
+            UserFollowing.follower_user_id == user.id,
+            UserFollowing.following_user_id == user_id,
+        )
+    )
+    if not existing_result.scalar_one_or_none():
+        db.add(UserFollowing(follower_user_id=user.id, following_user_id=user_id))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+    return {"ok": True}
+
+
+@api_router.delete("/users/{user_id}/follow")
+async def unfollow_user(
+    user_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    existing_result = await db.execute(
+        select(UserFollowing).where(
+            UserFollowing.follower_user_id == user.id,
+            UserFollowing.following_user_id == user_id,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing:
+        await db.delete(existing)
+        await db.commit()
+    return {"ok": True}
+
+
+# ========== CELEBRATION WALL ENDPOINT ==========
+def _reaction_type_key(value: ProjectReactionType) -> str:
+    return value.value if isinstance(value, ProjectReactionType) else str(value)
+
+
+async def _reaction_counts_for_projects(db: AsyncSession, project_ids: List[str]) -> Dict[str, Dict[str, int]]:
+    counts = {pid: {"applaud": 0, "star": 0, "inspired": 0} for pid in project_ids}
+    if not project_ids:
+        return counts
+    result = await db.execute(
+        select(ProjectReaction.project_id, ProjectReaction.reaction_type, func.count(ProjectReaction.id))
+        .where(ProjectReaction.project_id.in_(project_ids))
+        .group_by(ProjectReaction.project_id, ProjectReaction.reaction_type)
+    )
+    for pid, reaction_type, count in result.all():
+        key = _reaction_type_key(reaction_type)
+        if pid in counts and key in counts[pid]:
+            counts[pid][key] = int(count or 0)
+    return counts
+
+
+async def _viewer_reactions_for_projects(
+    db: AsyncSession, project_ids: List[str], viewer_id: Optional[str]
+) -> Dict[str, Dict[str, bool]]:
+    flags = {pid: {"applauded": False, "starred": False, "inspired": False} for pid in project_ids}
+    if not project_ids or not viewer_id:
+        return flags
+    result = await db.execute(
+        select(ProjectReaction.project_id, ProjectReaction.reaction_type).where(
+            ProjectReaction.project_id.in_(project_ids),
+            ProjectReaction.user_id == viewer_id,
+        )
+    )
+    for pid, reaction_type in result.all():
+        key = _reaction_type_key(reaction_type)
+        if pid not in flags:
+            continue
+        if key == "applaud":
+            flags[pid]["applauded"] = True
+        elif key == "star":
+            flags[pid]["starred"] = True
+        elif key == "inspired":
+            flags[pid]["inspired"] = True
+    return flags
+
+
+async def _comments_count_for_projects(db: AsyncSession, project_ids: List[str]) -> Dict[str, int]:
+    counts = {pid: 0 for pid in project_ids}
+    if not project_ids:
+        return counts
+    result = await db.execute(
+        select(Comment.project_id, func.count(Comment.id))
+        .where(Comment.project_id.in_(project_ids))
+        .group_by(Comment.project_id)
+    )
+    for pid, count in result.all():
+        counts[pid] = int(count or 0)
+    return counts
+
+
+async def _accepted_collaborators_count_for_projects(db: AsyncSession, project_ids: List[str]) -> Dict[str, int]:
+    counts = {pid: 0 for pid in project_ids}
+    if not project_ids:
+        return counts
+    result = await db.execute(
+        select(CollaborationRequest.project_id, func.count(CollaborationRequest.id))
+        .where(
+            CollaborationRequest.project_id.in_(project_ids),
+            CollaborationRequest.status == CollaborationStatus.accepted,
+        )
+        .group_by(CollaborationRequest.project_id)
+    )
+    for pid, count in result.all():
+        counts[pid] = int(count or 0)
+    return counts
+
+
+def _celebration_item_response(
+    project: Project,
+    *,
+    reaction_counts: Dict[str, int],
+    viewer_reactions: Dict[str, bool],
+    comments_count: int,
+    collaborators_count: int,
+) -> dict:
+    payload = project_to_response(project, include_user=True, last_activity_at=project.updated_at)
+    payload["completed_at"] = project.updated_at.isoformat() if project.updated_at else None
+    payload["builder"] = {
+        "id": project.user.id if project.user else None,
+        "name": project.user.name if project.user else None,
+        "username": project.user.username if project.user else None,
+        "picture": (project.user.picture if project.user else None),
+    }
+    payload["comments_count"] = int(comments_count or 0)
+    payload["collaborators_count"] = int(collaborators_count or 0)
+    payload["reaction_counts"] = {
+        "applaud": int(reaction_counts.get("applaud", 0)),
+        "star": int(reaction_counts.get("star", 0)),
+        "inspired": int(reaction_counts.get("inspired", 0)),
+    }
+    payload["viewer_reactions"] = {
+        "applauded": bool(viewer_reactions.get("applauded", False)),
+        "starred": bool(viewer_reactions.get("starred", False)),
+        "inspired": bool(viewer_reactions.get("inspired", False)),
+    }
+    return payload
+
+
+def _celebration_sort_score(
+    project: Project,
+    *,
+    sort: str,
+    reaction_counts: Dict[str, int],
+    comments_count: int,
+    collaborators_count: int,
+) -> tuple:
+    if sort == "most_applauded":
+        return (
+            int(reaction_counts.get("applaud", 0)),
+            int(reaction_counts.get("star", 0)),
+            int(reaction_counts.get("inspired", 0)),
+            project.updated_at or datetime.min.replace(tzinfo=timezone.utc),
+        )
+    if sort == "trending":
+        score = (
+            int(reaction_counts.get("applaud", 0)) * 3
+            + int(reaction_counts.get("star", 0)) * 2
+            + int(reaction_counts.get("inspired", 0)) * 2
+            + int(comments_count or 0)
+            + int(collaborators_count or 0) * 2
+        )
+        return (score, project.updated_at or datetime.min.replace(tzinfo=timezone.utc))
+    return (project.updated_at or datetime.min.replace(tzinfo=timezone.utc),)
+
+
+@api_router.get("/celebration", response_model=CelebrationListResponse)
+async def get_celebration_wall(
+    limit: int = Query(default=20, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    filter: str = Query(default="all"),
+    sort: str = Query(default="recent"),
+    viewer: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    filter_value = (filter or "all").lower()
+    sort_value = (sort or "recent").lower()
+    if filter_value not in {"all", "week", "month"}:
+        raise HTTPException(status_code=400, detail="Invalid filter")
+    if sort_value not in {"recent", "trending", "most_applauded"}:
+        raise HTTPException(status_code=400, detail="Invalid sort")
+
+    now = datetime.now(timezone.utc)
+    week_cutoff = now - timedelta(days=7)
+    month_cutoff = now - timedelta(days=30)
+    active_cutoff = None
+    if filter_value == "week":
+        active_cutoff = week_cutoff
+    elif filter_value == "month":
+        active_cutoff = month_cutoff
+
+    summary_result = await db.execute(
+        select(
+            func.count(Project.id),
+            func.sum(case((Project.updated_at >= week_cutoff, 1), else_=0)),
+            func.sum(case((Project.updated_at >= month_cutoff, 1), else_=0)),
+        ).where(Project.stage == ProjectStage.completed)
+    )
+    total_completed, this_week, this_month = summary_result.one()
+
+    query = (
+        select(Project)
+        .options(selectinload(Project.user).selectinload(User.profile))
         .where(Project.stage == ProjectStage.completed)
     )
-    total = count_result.scalar()
-    
+    if active_cutoff is not None:
+        query = query.where(Project.updated_at >= active_cutoff)
+    result = await db.execute(query)
+    projects = result.scalars().all()
+    total = len(projects)
+    project_ids = [p.id for p in projects]
+    reaction_counts_map = await _reaction_counts_for_projects(db, project_ids)
+    comments_counts_map = await _comments_count_for_projects(db, project_ids)
+    collaborators_counts_map = await _accepted_collaborators_count_for_projects(db, project_ids)
+    viewer_reactions_map = await _viewer_reactions_for_projects(db, project_ids, viewer.id if viewer else None)
+
+    projects.sort(
+        key=lambda project: _celebration_sort_score(
+            project,
+            sort=sort_value,
+            reaction_counts=reaction_counts_map.get(project.id, {}),
+            comments_count=comments_counts_map.get(project.id, 0),
+            collaborators_count=collaborators_counts_map.get(project.id, 0),
+        ),
+        reverse=True,
+    )
+
+    spotlight_payload = None
+    spotlight_project_id = None
+    if projects:
+        spotlight = projects[0]
+        spotlight_project_id = spotlight.id
+        spotlight_payload = _celebration_item_response(
+            spotlight,
+            reaction_counts=reaction_counts_map.get(spotlight.id, {}),
+            viewer_reactions=viewer_reactions_map.get(spotlight.id, {}),
+            comments_count=comments_counts_map.get(spotlight.id, 0),
+            collaborators_count=collaborators_counts_map.get(spotlight.id, 0),
+        )
+
+    paged_projects = projects[offset : offset + limit]
+    if offset == 0 and spotlight_project_id:
+        paged_projects = [project for project in paged_projects if project.id != spotlight_project_id]
+
     return {
-        "items": [project_to_response(p, include_user=True) for p in projects],
+        "items": [
+            _celebration_item_response(
+                project,
+                reaction_counts=reaction_counts_map.get(project.id, {}),
+                viewer_reactions=viewer_reactions_map.get(project.id, {}),
+                comments_count=comments_counts_map.get(project.id, 0),
+                collaborators_count=collaborators_counts_map.get(project.id, 0),
+            )
+            for project in paged_projects
+        ],
+        "spotlight": spotlight_payload,
+        "summary": {
+            "total_completed": int(total_completed or 0),
+            "this_week": int(this_week or 0),
+            "this_month": int(this_month or 0),
+        },
         "total": total,
         "limit": limit,
-        "offset": offset
+        "offset": offset,
+    }
+
+
+@api_router.post("/projects/{project_id}/reactions", response_model=ProjectReactionUpdateResponse)
+async def add_project_reaction(
+    project_id: str,
+    payload: ProjectReactionUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project_result = await db.execute(select(Project).where(Project.id == project_id))
+    project = project_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.stage != ProjectStage.completed:
+        raise HTTPException(status_code=400, detail="Reactions are only available for completed projects")
+
+    reaction_type = ProjectReactionType(payload.reaction_type.value)
+    existing_result = await db.execute(
+        select(ProjectReaction).where(
+            ProjectReaction.project_id == project_id,
+            ProjectReaction.user_id == user.id,
+            ProjectReaction.reaction_type == reaction_type,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if not existing:
+        db.add(ProjectReaction(project_id=project_id, user_id=user.id, reaction_type=reaction_type))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+
+    counts = await _reaction_counts_for_projects(db, [project_id])
+    flags = await _viewer_reactions_for_projects(db, [project_id], user.id)
+    return {
+        "project_id": project_id,
+        "reaction_counts": counts.get(project_id, {"applaud": 0, "star": 0, "inspired": 0}),
+        "viewer_reactions": flags.get(project_id, {"applauded": False, "starred": False, "inspired": False}),
+    }
+
+
+@api_router.delete("/projects/{project_id}/reactions/{reaction_type}", response_model=ProjectReactionUpdateResponse)
+async def remove_project_reaction(
+    project_id: str,
+    reaction_type: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        reaction_enum = ProjectReactionType(reaction_type)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid reaction type")
+
+    existing_result = await db.execute(
+        select(ProjectReaction).where(
+            ProjectReaction.project_id == project_id,
+            ProjectReaction.user_id == user.id,
+            ProjectReaction.reaction_type == reaction_enum,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing:
+        await db.delete(existing)
+        await db.commit()
+
+    counts = await _reaction_counts_for_projects(db, [project_id])
+    flags = await _viewer_reactions_for_projects(db, [project_id], user.id)
+    return {
+        "project_id": project_id,
+        "reaction_counts": counts.get(project_id, {"applaud": 0, "star": 0, "inspired": 0}),
+        "viewer_reactions": flags.get(project_id, {"applauded": False, "starred": False, "inspired": False}),
     }
 
 
@@ -3450,7 +4212,20 @@ async def get_my_projects(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    query = select(Project).where(Project.user_id == user.id)
+    query = (
+        select(Project)
+        .outerjoin(CollaborationRequest, CollaborationRequest.project_id == Project.id)
+        .where(
+            or_(
+                Project.user_id == user.id,
+                and_(
+                    CollaborationRequest.requester_user_id == user.id,
+                    CollaborationRequest.status == CollaborationStatus.accepted,
+                ),
+            )
+        )
+        .distinct()
+    )
     
     if stage:
         try:
@@ -3467,6 +4242,7 @@ async def get_my_projects(
     bookmarked_ids = await _bookmarked_ids_for_user(db, user.id, project_ids)
     activity_map = await _project_activity_map(db, project_ids)
     
+    owned_count = sum(1 for project in projects if project.user_id == user.id)
     return {
         "items": [
             project_to_response(
@@ -3476,7 +4252,12 @@ async def get_my_projects(
                 last_activity_at=activity_map.get(p.id) or p.updated_at,
             )
             for p in projects
-        ]
+        ],
+        "meta": {
+            "workspace_scope": "owned_and_accepted_collaborations",
+            "owned_count": owned_count,
+            "collaboration_count": max(0, len(projects) - owned_count),
+        },
     }
 
 

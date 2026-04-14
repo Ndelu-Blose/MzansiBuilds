@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { Rss, Trophy, FolderKanban, LogOut, Menu, X, Code, Bell, Users } from 'lucide-react';
+import { Rss, Trophy, FolderKanban, Menu, X, Code, Bell, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { notificationsAPI } from '../lib/api';
 import { Button } from '@/components/ui/button';
@@ -46,10 +46,9 @@ const mobileNavLink = ({ isActive }) =>
  * @param {{ variant?: 'app' | 'marketing' }} props
  */
 export default function SiteHeader({ variant = 'app' }) {
-  const { user, logout, isAuthenticated } = useAuth();
+  const { logout, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifItems, setNotifItems] = useState([]);
   const [notifUnread, setNotifUnread] = useState(0);
@@ -65,10 +64,6 @@ export default function SiteHeader({ variant = 'app' }) {
       /* ignore when offline or unauthenticated */
     }
   }, [isAuthenticated]);
-
-  useEffect(() => {
-    setAvatarLoadFailed(false);
-  }, [user?.picture]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -122,30 +117,34 @@ export default function SiteHeader({ variant = 'app' }) {
             Mzansi<span className="text-primary">Builds</span>
           </Link>
 
-          <nav className="hidden md:flex items-stretch gap-0">
-            <NavLink to="/explore" className={desktopNavLink}>
-              <Code className="w-4 h-4 shrink-0" />
-              Explore
-            </NavLink>
-            <NavLink to="/open-roles" className={desktopNavLink}>
-              <Users className="w-4 h-4 shrink-0" />
-              Open Roles
-            </NavLink>
-            <NavLink to="/feed" className={desktopNavLink}>
-              <Rss className="w-4 h-4 shrink-0" />
-              Feed
-            </NavLink>
-            <NavLink to="/celebration" className={desktopNavLink}>
-              <Trophy className="w-4 h-4 shrink-0" />
-              {variant === 'marketing' ? 'Celebration Wall' : 'Celebration'}
-            </NavLink>
-            {isAuthenticated && (
-              <NavLink to="/dashboard" className={desktopNavLink}>
-                <FolderKanban className="w-4 h-4 shrink-0" />
-                Dashboard
+          {variant === 'marketing' ? (
+            <nav className="hidden md:flex items-stretch gap-0">
+              <NavLink to="/explore" className={desktopNavLink}>
+                <Code className="w-4 h-4 shrink-0" />
+                Explore
               </NavLink>
-            )}
-          </nav>
+              <NavLink to="/open-roles" className={desktopNavLink}>
+                <Users className="w-4 h-4 shrink-0" />
+                Open Roles
+              </NavLink>
+              <NavLink to="/feed" className={desktopNavLink}>
+                <Rss className="w-4 h-4 shrink-0" />
+                Feed
+              </NavLink>
+              <NavLink to="/celebration" className={desktopNavLink}>
+                <Trophy className="w-4 h-4 shrink-0" />
+                Celebration Wall
+              </NavLink>
+              {isAuthenticated && (
+                <NavLink to="/dashboard" className={desktopNavLink}>
+                  <FolderKanban className="w-4 h-4 shrink-0" />
+                  Dashboard
+                </NavLink>
+              )}
+            </nav>
+          ) : (
+            <div className="hidden md:block text-sm text-muted-foreground">Use the sidebar to navigate your workspace</div>
+          )}
 
           <div className="flex items-center gap-2 shrink-0">
             {isAuthenticated && variant === 'app' && (
@@ -213,67 +212,34 @@ export default function SiteHeader({ variant = 'app' }) {
               </Popover>
             )}
             <div className="hidden md:flex items-center gap-3">
-            {isAuthenticated && variant === 'marketing' ? (
-              <Button asChild>
-                <Link to="/dashboard" data-testid="dashboard-btn">
-                  Dashboard
-                </Link>
-              </Button>
-            ) : isAuthenticated ? (
-              <div className="flex items-center gap-3">
-                <Link
-                  to="/profile"
-                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  data-testid="profile-link"
-                >
-                  {user?.picture && !avatarLoadFailed ? (
-                    <img
-                      src={user.picture}
-                      alt={user.name || ''}
-                      className="w-8 h-8 rounded-full ring-2 ring-border"
-                      onError={() => setAvatarLoadFailed(true)}
-                    />
-                  ) : (
-                    <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center text-xs font-medium text-foreground">
-                      {user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase()}
-                    </div>
-                  )}
-                  <span className="hidden lg:inline max-w-[10rem] truncate">
-                    {user?.name || user?.email?.split('@')[0]}
-                  </span>
-                </Link>
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="text-muted-foreground hover:text-foreground transition-colors p-2 rounded-md hover:bg-muted"
-                  data-testid="logout-btn"
-                  aria-label="Sign out"
-                >
-                  <LogOut className="w-5 h-5" />
-                </button>
-              </div>
-            ) : variant === 'marketing' ? (
-              <div className="flex items-center gap-4">
-                <Link
-                  to="/login"
-                  className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                  data-testid="signin-btn"
-                >
-                  Sign In
-                </Link>
-                <Button asChild size="default">
-                  <Link to="/login" data-testid="get-started-btn">
-                    Get Started
+              {isAuthenticated && variant === 'marketing' ? (
+                <Button asChild>
+                  <Link to="/dashboard" data-testid="dashboard-btn">
+                    Dashboard
                   </Link>
                 </Button>
-              </div>
-            ) : (
-              <Button asChild>
-                <Link to="/login" data-testid="header-signin-btn">
-                  Sign In
-                </Link>
-              </Button>
-            )}
+              ) : !isAuthenticated && variant === 'marketing' ? (
+                <div className="flex items-center gap-4">
+                  <Link
+                    to="/login"
+                    className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                    data-testid="signin-btn"
+                  >
+                    Sign In
+                  </Link>
+                  <Button asChild size="default">
+                    <Link to="/login" data-testid="get-started-btn">
+                      Get Started
+                    </Link>
+                  </Button>
+                </div>
+              ) : !isAuthenticated ? (
+                <Button asChild>
+                  <Link to="/login" data-testid="header-signin-btn">
+                    Sign In
+                  </Link>
+                </Button>
+              ) : null}
             </div>
           </div>
 
@@ -307,8 +273,20 @@ export default function SiteHeader({ variant = 'app' }) {
                 <NavLink to="/dashboard" className={mobileNavLink} onClick={closeMobile}>
                   Dashboard
                 </NavLink>
+                <NavLink to="/my-projects" className={mobileNavLink} onClick={closeMobile}>
+                  My Projects
+                </NavLink>
+                <NavLink to="/collaboration-requests" className={mobileNavLink} onClick={closeMobile}>
+                  Collaboration Requests
+                </NavLink>
+                <NavLink to="/notifications" className={mobileNavLink} onClick={closeMobile}>
+                  Notifications
+                </NavLink>
                 <NavLink to="/profile" className={mobileNavLink} onClick={closeMobile}>
                   Profile
+                </NavLink>
+                <NavLink to="/settings" className={mobileNavLink} onClick={closeMobile}>
+                  Settings
                 </NavLink>
                 <button
                   type="button"

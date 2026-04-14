@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
-import Layout from '../components/Layout';
 import { discoveryAPI } from '../lib/api';
 
 export default function OpenRolesPage() {
@@ -25,8 +24,7 @@ export default function OpenRolesPage() {
   }, [filters]);
 
   return (
-    <Layout>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-3xl font-bold text-foreground">Open Roles Board</h1>
           <Link to="/explore" className="text-primary text-sm hover:underline">Back to Explore</Link>
@@ -57,7 +55,6 @@ export default function OpenRolesPage() {
             </div>
           )
         )}
-      </div>
-    </Layout>
+    </div>
   );
 }

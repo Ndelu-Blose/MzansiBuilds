@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { profileAPI, digestAPI, activationAPI } from '../lib/api';
+import { profileAPI, activationAPI } from '../lib/api';
 import { Loader2, Save, Github, User, Link as LinkIcon, Upload, Trash2, MapPin } from 'lucide-react';
-import Layout from '../components/Layout';
-import { Button } from '@/components/ui/button';
+import { Button } from '../components/ui/button';
 
 const fieldClass =
   'w-full rounded-md border border-input bg-background px-4 py-2.5 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background transition-all';
@@ -28,7 +28,6 @@ export default function ProfilePage() {
     avatarUrl: '',
     skills: [],
   });
-  const [digestPrefs, setDigestPrefs] = useState({ enabled: true, frequency: 'weekly', channels: ['in_app'] });
   const [activationChecklist, setActivationChecklist] = useState({ profile_items: [], owner_items: [], top_items: [] });
   const [initialForm, setInitialForm] = useState(null);
   const fileInputRef = useRef(null);
@@ -52,14 +51,6 @@ export default function ProfilePage() {
         };
         setForm(nextForm);
         setInitialForm(nextForm);
-        try {
-          const digestRes = await digestAPI.getPreview();
-          if (digestRes?.data) {
-            setDigestPrefs((prev) => ({ ...prev, enabled: true }));
-          }
-        } catch (_err) {
-          console.debug('Digest preview unavailable on profile load', _err);
-        }
         try {
           const checklistRes = await activationAPI.getChecklist();
           setActivationChecklist(checklistRes.data || { profile_items: [], owner_items: [], top_items: [] });
@@ -174,7 +165,6 @@ export default function ProfilePage() {
         portfolio_url: form.portfolioUrl || null,
         avatar_url: form.avatarUrl || null,
       });
-      await digestAPI.updatePreferences(digestPrefs);
       setInitialForm(form);
       setSuccessMessage('Profile updated successfully.');
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -221,17 +211,14 @@ export default function ProfilePage() {
 
   if (loading) {
     return (
-      <Layout>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        </div>
-      </Layout>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
     );
   }
 
   return (
-    <Layout>
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="profile-page">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="profile-page">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground tracking-tight flex items-center gap-3">
             <User className="w-8 h-8 text-primary" />
@@ -319,7 +306,7 @@ export default function ProfilePage() {
             <p className="text-lg font-semibold text-foreground mb-4">Basic information</p>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">Avatar</label>
+                <label htmlFor="avatar-upload-input" className="block text-sm font-medium text-foreground mb-1.5">Avatar</label>
                 <div className="flex items-center gap-3">
                   {previewAvatar ? (
                     <img
@@ -333,7 +320,7 @@ export default function ProfilePage() {
                       {(form.displayName || user?.name || user?.email || 'U')[0].toUpperCase()}
                     </div>
                   )}
-                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
+                  <input id="avatar-upload-input" ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
                   <Button type="button" variant="outline" onClick={() => fileInputRef.current?.click()}>
                     <Upload className="w-4 h-4" />
                     Upload
@@ -348,8 +335,9 @@ export default function ProfilePage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">Display Name</label>
+                  <label htmlFor="display-name-input" className="block text-sm font-medium text-foreground mb-1.5">Display Name</label>
                   <input
+                    id="display-name-input"
                     type="text"
                     value={form.displayName}
                     onChange={(e) => setField('displayName', e.target.value)}
@@ -358,8 +346,9 @@ export default function ProfilePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">Username</label>
+                  <label htmlFor="username-input" className="block text-sm font-medium text-foreground mb-1.5">Username</label>
                   <input
+                    id="username-input"
                     type="text"
                     value={form.username}
                     onChange={(e) => setField('username', e.target.value.toLowerCase())}
@@ -372,8 +361,9 @@ export default function ProfilePage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">Headline / Role</label>
+                  <label htmlFor="headline-input" className="block text-sm font-medium text-foreground mb-1.5">Headline / Role</label>
                   <input
+                    id="headline-input"
                     type="text"
                     value={form.headline}
                     onChange={(e) => setField('headline', e.target.value)}
@@ -382,13 +372,14 @@ export default function ProfilePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1.5">Location</label>
+                  <label htmlFor="location-input" className="block text-sm font-medium text-foreground mb-1.5">Location</label>
                   <div className="relative">
                     <MapPin
                       className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
                       aria-hidden
                     />
                     <input
+                      id="location-input"
                       type="text"
                       value={form.location}
                       onChange={(e) => setField('location', e.target.value)}
@@ -400,8 +391,9 @@ export default function ProfilePage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">Bio</label>
+                <label htmlFor="bio-input" className="block text-sm font-medium text-foreground mb-1.5">Bio</label>
                 <textarea
+                  id="bio-input"
                   value={form.bio}
                   onChange={(e) => setField('bio', e.target.value)}
                   placeholder="Tell your story as a builder..."
@@ -414,21 +406,15 @@ export default function ProfilePage() {
           </section>
 
           <section className="bg-card border border-border rounded-xl shadow-card p-6">
-            <h3 className="text-base font-semibold text-muted-foreground uppercase tracking-wide mb-1">Digest</h3>
-            <p className="text-lg font-semibold text-foreground mb-4">Weekly builder digest preferences</p>
-            <div className="space-y-3 text-sm">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={digestPrefs.enabled} onChange={(e) => setDigestPrefs((p) => ({ ...p, enabled: e.target.checked }))} />
-                Enable digest
-              </label>
-              <div>
-                <label className="block mb-1">Frequency</label>
-                <select className={fieldClass} value={digestPrefs.frequency} onChange={(e) => setDigestPrefs((p) => ({ ...p, frequency: e.target.value }))}>
-                  <option value="weekly">Weekly</option>
-                  <option value="biweekly">Bi-weekly</option>
-                </select>
-              </div>
-            </div>
+            <h3 className="text-base font-semibold text-muted-foreground uppercase tracking-wide mb-1">Notifications</h3>
+            <p className="text-lg font-semibold text-foreground mb-2">Manage communication preferences</p>
+            <p className="text-sm text-muted-foreground">
+              Digest and collaboration email settings are managed in{' '}
+              <Link to="/settings" className="text-primary hover:underline">
+                Settings
+              </Link>
+              .
+            </p>
           </section>
 
           <section className="bg-card border border-border rounded-xl shadow-card p-6">
@@ -436,25 +422,26 @@ export default function ProfilePage() {
             <p className="text-lg font-semibold text-foreground mb-4">Social & portfolio</p>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">
+                <label htmlFor="github-input" className="block text-sm font-medium text-foreground mb-1.5">
                   <Github className="w-4 h-4 inline mr-1" />
                   GitHub URL
                 </label>
                 <input
+                  id="github-input"
                   type="url"
                   value={form.githubUrl}
                   onChange={(e) => setField('githubUrl', e.target.value)}
                   placeholder="https://github.com/yourusername"
                   className={fieldClass}
-                  data-testid="github-input"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">
+                <label htmlFor="linkedin-input" className="block text-sm font-medium text-foreground mb-1.5">
                   <LinkIcon className="w-4 h-4 inline mr-1" />
                   LinkedIn URL
                 </label>
                 <input
+                  id="linkedin-input"
                   type="url"
                   value={form.linkedinUrl}
                   onChange={(e) => setField('linkedinUrl', e.target.value)}
@@ -463,11 +450,12 @@ export default function ProfilePage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1.5">
+                <label htmlFor="portfolio-input" className="block text-sm font-medium text-foreground mb-1.5">
                   <LinkIcon className="w-4 h-4 inline mr-1" />
                   Portfolio URL
                 </label>
                 <input
+                  id="portfolio-input"
                   type="url"
                   value={form.portfolioUrl}
                   onChange={(e) => setField('portfolioUrl', e.target.value)}
@@ -563,7 +551,6 @@ export default function ProfilePage() {
             </div>
           </div>
         )}
-      </div>
-    </Layout>
+    </div>
   );
 }

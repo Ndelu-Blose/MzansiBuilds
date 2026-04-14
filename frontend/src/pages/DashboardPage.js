@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,8 +13,8 @@ import {
   ExternalLink,
   Zap,
   Bell,
+  AlertTriangle,
 } from 'lucide-react';
-import Layout from '../components/Layout';
 import ProjectCard from '../components/ProjectCard';
 import CreateProjectModal from '../components/CreateProjectModal';
 import { Button } from '@/components/ui/button';
@@ -29,7 +29,7 @@ function formatNotifWhen(iso) {
 }
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, isAuthenticated, authReady } = useAuth();
   const [projects, setProjects] = useState([]);
   const [collabRequests, setCollabRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -48,7 +48,6 @@ export default function DashboardPage() {
   const [trendingProjects, setTrendingProjects] = useState([]);
   const [trendingBuilders, setTrendingBuilders] = useState([]);
   const [digestPreview, setDigestPreview] = useState(null);
-  const [activationChecklist, setActivationChecklist] = useState({ profile_items: [], owner_items: [], top_items: [] });
   const [activationState, setActivationState] = useState({
     has_projects: false,
     has_matches: false,
@@ -56,14 +55,15 @@ export default function DashboardPage() {
     skills_count: 0,
     first_match_count: 0,
   });
+  const [projectsLoadError, setProjectsLoadError] = useState('');
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const fetchData = useCallback(async () => {
+    if (!isAuthenticated || !authReady) return;
+    setLoading(true);
+    setProjectsLoadError('');
 
-  const fetchData = async () => {
     try {
-      const [projectsRes, collabsRes, savedRes, matchedRes, trendingProjectsRes, trendingBuildersRes, digestRes, checklistRes, activationStateRes] = await Promise.all([
+      const [projectsRes, collabsRes, savedRes, matchedRes, trendingProjectsRes, trendingBuildersRes, digestRes, activationStateRes] = await Promise.all([
         projectsAPI.getMyProjects(),
         collaborationAPI.getMyRequests(),
         bookmarksAPI.list({ limit: 5, offset: 0 }),
@@ -71,7 +71,6 @@ export default function DashboardPage() {
         discoveryAPI.getTrendingProjects({ limit: 5 }),
         discoveryAPI.getTrendingBuilders({ limit: 5 }),
         digestAPI.getPreview(),
-        activationAPI.getChecklist(),
         activationAPI.getDashboardState(),
       ]);
 
@@ -85,7 +84,6 @@ export default function DashboardPage() {
       setTrendingProjects(trendingProjectsRes.data.items || []);
       setTrendingBuilders(trendingBuildersRes.data.items || []);
       setDigestPreview(digestRes.data || null);
-      setActivationChecklist(checklistRes.data || { profile_items: [], owner_items: [], top_items: [] });
       setActivationState(activationStateRes.data || {
         has_projects: false,
         has_matches: false,
@@ -102,6 +100,14 @@ export default function DashboardPage() {
       });
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
+      setProjectsLoadError('We could not load your workspace projects right now. Please retry.');
+      // Preserve current cards when a refresh fails, so recent optimistic updates remain visible.
+      setStats({
+        total: 0,
+        completed: 0,
+        inProgress: 0,
+        pendingCollabs: 0,
+      });
     } finally {
       setLoading(false);
     }
@@ -116,77 +122,97 @@ export default function DashboardPage() {
       setNotifUnread(0);
       setNotifLoadError(true);
     }
-  };
+  }, [isAuthenticated, authReady]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData, user?.id, authReady]);
+
+  const hasStats = useMemo(
+    () => stats.total > 0 || stats.completed > 0 || stats.inProgress > 0 || stats.pendingCollabs > 0,
+    [stats]
+  );
 
   const handleProjectCreated = (newProject) => {
-    setProjects([newProject, ...projects]);
-    setStats(prev => ({ ...prev, total: prev.total + 1 }));
+    setProjectsLoadError('');
+    setProjects((prev) => [newProject, ...prev]);
+    setStats((prev) => ({ ...prev, total: prev.total + 1 }));
     setShowCreateModal(false);
   };
 
   if (loading) {
     return (
-      <Layout>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        </div>
-      </Layout>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
     );
   }
 
   return (
-    <Layout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="dashboard">
-        {/* Welcome Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground tracking-tight">
-            Welcome back, <span className="text-primary">{user?.name || user?.email?.split('@')[0]}</span>
-          </h1>
-          <p className="text-muted-foreground mt-1">Here's what's happening with your projects</p>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-card border border-border p-4 rounded-xl shadow-card">
-            <div className="flex items-center gap-3">
-              <FolderKanban className="w-5 h-5 text-muted-foreground" />
-              <div>
-                <p className="font-mono text-2xl font-bold text-foreground">{stats.total}</p>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">Projects</p>
-              </div>
-            </div>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="dashboard">
+        <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground tracking-tight">
+              Welcome back, <span className="text-primary">{user?.name || user?.email?.split('@')[0]}</span>
+            </h1>
+            <p className="text-muted-foreground mt-1">Your build in public workspace</p>
           </div>
-
-          <div className="bg-card border border-border p-4 rounded-xl shadow-card">
-            <div className="flex items-center gap-3">
-              <Zap className="w-5 h-5 text-primary" />
-              <div>
-                <p className="font-mono text-2xl font-bold text-foreground">{stats.inProgress}</p>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">In Progress</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border p-4 rounded-xl shadow-card">
-            <div className="flex items-center gap-3">
-              <Trophy className="w-5 h-5 text-primary" />
-              <div>
-                <p className="font-mono text-2xl font-bold text-foreground">{stats.completed}</p>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border p-4 rounded-xl shadow-card">
-            <div className="flex items-center gap-3">
-              <Users className="w-5 h-5 text-muted-foreground" />
-              <div>
-                <p className="font-mono text-2xl font-bold text-foreground">{stats.pendingCollabs}</p>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">Collab Requests</p>
-              </div>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={() => setShowCreateModal(true)}>
+              <Plus className="w-4 h-4" />
+              Create Project
+            </Button>
+            <Button onClick={() => setShowCreateModal(true)} data-testid="create-project-btn">
+              <Plus className="w-4 h-4" />
+              Import GitHub
+            </Button>
           </div>
         </div>
+
+        {hasStats ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <div className="bg-card border border-border p-4 rounded-xl shadow-card">
+              <div className="flex items-center gap-3">
+                <FolderKanban className="w-5 h-5 text-muted-foreground" />
+                <div>
+                  <p className="font-mono text-2xl font-bold text-foreground">{stats.total}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Projects</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-card border border-border p-4 rounded-xl shadow-card">
+              <div className="flex items-center gap-3">
+                <Zap className="w-5 h-5 text-primary" />
+                <div>
+                  <p className="font-mono text-2xl font-bold text-foreground">{stats.inProgress}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">In Progress</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-card border border-border p-4 rounded-xl shadow-card">
+              <div className="flex items-center gap-3">
+                <Trophy className="w-5 h-5 text-primary" />
+                <div>
+                  <p className="font-mono text-2xl font-bold text-foreground">{stats.completed}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-card border border-border p-4 rounded-xl shadow-card">
+              <div className="flex items-center gap-3">
+                <Users className="w-5 h-5 text-muted-foreground" />
+                <div>
+                  <p className="font-mono text-2xl font-bold text-foreground">{stats.pendingCollabs}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Collaborations</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mb-8 rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+            Tip: add your first project or import a GitHub repo to start building momentum.
+          </div>
+        )}
 
         {activationState.first_match_count > 0 && (
           <div className="mb-6 rounded-xl border border-primary/30 bg-primary/10 p-4">
@@ -204,21 +230,38 @@ export default function DashboardPage() {
           <div className="lg:col-span-2">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-foreground">Your Projects</h2>
-              <Button onClick={() => setShowCreateModal(true)} data-testid="create-project-btn">
-                <Plus className="w-4 h-4" />
-                Import from GitHub
+              <Button variant="ghost" onClick={fetchData}>
+                Refresh
               </Button>
             </div>
 
+            {projectsLoadError ? (
+              <div className="bg-card border border-destructive/30 rounded-xl shadow-card p-6 mb-6">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-medium text-foreground">Project data could not load</h3>
+                    <p className="text-sm text-muted-foreground mt-1">{projectsLoadError}</p>
+                    <Button className="mt-4" onClick={fetchData}>Retry loading projects</Button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             {projects.length === 0 ? (
               <div className="bg-card border border-border rounded-xl shadow-card p-12 text-center">
                 <FolderKanban className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-foreground mb-2">No projects yet</h3>
-                <p className="text-muted-foreground mb-6">Start building in public by importing code or creating an idea project</p>
-                <Button onClick={() => setShowCreateModal(true)} data-testid="empty-create-project-btn">
-                  <Plus className="w-4 h-4" />
-                  Import from GitHub
-                </Button>
+                <h3 className="text-lg font-medium text-foreground mb-2">You have not created any projects yet</h3>
+                <p className="text-muted-foreground mb-6">Start building in public by importing a repo, creating an idea, or joining a collaboration.</p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button variant="outline" onClick={() => setShowCreateModal(true)}>
+                    <Plus className="w-4 h-4" />
+                    Create Project
+                  </Button>
+                  <Button onClick={() => setShowCreateModal(true)} data-testid="empty-create-project-btn">
+                    <Plus className="w-4 h-4" />
+                    Import from GitHub
+                  </Button>
+                </div>
                 {activationState.skills_count === 0 && (
                   <p className="mt-3 text-xs text-muted-foreground">Add skills in your profile to unlock matching.</p>
                 )}
@@ -276,6 +319,7 @@ export default function DashboardPage() {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Activity</div>
             <div
               className="bg-card border border-border rounded-xl shadow-card p-6"
               data-testid="dashboard-notifications-preview"
@@ -329,12 +373,11 @@ export default function DashboardPage() {
               )}
               {!notifLoadError ? (
                 <p className="text-xs text-muted-foreground mt-4 leading-relaxed">
-                  Use the bell in the header for the full list and to mark items as read.
+                  Open the full notifications center from the sidebar or header bell to manage unread activity.
                 </p>
               ) : null}
             </div>
 
-            {/* Collaboration Requests */}
             <div className="bg-card border border-border rounded-xl shadow-card p-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-semibold text-foreground">Collaboration Requests</h3>
@@ -369,6 +412,7 @@ export default function DashboardPage() {
               )}
             </div>
 
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Quick Access</div>
             <div className="bg-card border border-border rounded-xl shadow-card p-6">
               <h3 className="font-semibold text-foreground mb-4">Quick Actions</h3>
               <div className="space-y-1">
@@ -442,19 +486,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="bg-card border border-border rounded-xl shadow-card p-6">
-              <h3 className="font-semibold text-foreground mb-3">Owner Activation</h3>
-              {activationChecklist.owner_items?.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Owner setup looks healthy.</p>
-              ) : (
-                <ul className="space-y-2 text-sm text-muted-foreground mb-4">
-                  {activationChecklist.owner_items.slice(0, 2).map((item) => (
-                    <li key={item.id}><span className="text-foreground font-medium">{item.title}:</span> {item.description}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Insights</div>
             <div className="bg-card border border-border rounded-xl shadow-card p-6">
               <h3 className="font-semibold text-foreground mb-3">Trending Projects</h3>
               {trendingProjects.length === 0 ? <p className="text-sm text-muted-foreground">No momentum yet.</p> : (
@@ -495,7 +527,6 @@ export default function DashboardPage() {
             onCreated={handleProjectCreated}
           />
         )}
-      </div>
-    </Layout>
+    </div>
   );
 }

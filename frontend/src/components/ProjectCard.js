@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Sparkles, Users, UserRound, Bookmark } from 'lucide-react';
+import { Sparkles, Users, UserRound, Bookmark, Hand, Star, Flame } from 'lucide-react';
 import StageBadge from './StageBadge';
-import { bookmarksAPI } from '../lib/api';
+import { bookmarksAPI, celebrationAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
 function ownerAvatarUrl(user) {
@@ -29,6 +29,11 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
   const [isBookmarked, setIsBookmarked] = useState(Boolean(project.is_bookmarked));
   const [bookmarkCount, setBookmarkCount] = useState(Number(project.bookmark_count || 0));
   const [bookmarkBusy, setBookmarkBusy] = useState(false);
+  const [reactionCounts, setReactionCounts] = useState(project.reaction_counts || { applaud: 0, star: 0, inspired: 0 });
+  const [viewerReactions, setViewerReactions] = useState(
+    project.viewer_reactions || { applauded: false, starred: false, inspired: false }
+  );
+  const [reactionBusy, setReactionBusy] = useState(null);
   const owner = project.user;
   const rawAvatar = ownerAvatarUrl(owner);
   const displayName = ownerDisplayName(owner);
@@ -42,6 +47,11 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
     setIsBookmarked(Boolean(project.is_bookmarked));
     setBookmarkCount(Number(project.bookmark_count || 0));
   }, [project.is_bookmarked, project.bookmark_count]);
+  
+  useEffect(() => {
+    setReactionCounts(project.reaction_counts || { applaud: 0, star: 0, inspired: 0 });
+    setViewerReactions(project.viewer_reactions || { applauded: false, starred: false, inspired: false });
+  }, [project.reaction_counts, project.viewer_reactions]);
 
   const formatDate = (dateStr) => {
     return new Date(dateStr).toLocaleDateString('en-US', {
@@ -59,6 +69,8 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
 
   const showAvatarImage = Boolean(rawAvatar) && !avatarFailed;
   const healthLabel = project.health_status ? String(project.health_status).replace('_', ' ') : '';
+  const completedLabel = project.completed_at || project.updated_at || project.created_at;
+  const lastActiveLabel = project.last_activity_at || project.updated_at || project.created_at;
 
   const handleToggleBookmark = async (event) => {
     event.preventDefault();
@@ -83,6 +95,25 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
       console.error('Failed to toggle bookmark', error);
     } finally {
       setBookmarkBusy(false);
+    }
+  };
+
+  const handleReaction = async (event, reactionType, activeKey) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isAuthenticated || reactionBusy) return;
+    setReactionBusy(reactionType);
+    try {
+      const isActive = Boolean(viewerReactions[activeKey]);
+      const response = isActive
+        ? await celebrationAPI.unreact(project.id, reactionType)
+        : await celebrationAPI.react(project.id, reactionType);
+      setReactionCounts(response.data.reaction_counts || { applaud: 0, star: 0, inspired: 0 });
+      setViewerReactions(response.data.viewer_reactions || { applauded: false, starred: false, inspired: false });
+    } catch (error) {
+      console.error('Failed to update reaction', error);
+    } finally {
+      setReactionBusy(null);
     }
   };
 
@@ -155,6 +186,18 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
           </div>
         )}
 
+        {celebrationMode && (
+          <div className="mt-1 mb-4 rounded-md border border-border bg-background/60 p-2">
+            <p className="text-xs text-muted-foreground">
+              Built by <span className="text-foreground font-medium">{displayName || 'Member'}</span> · Completed{' '}
+              {completedLabel ? formatDate(completedLabel) : 'recently'}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {project.collaborators_count || 0} collaborators · {project.comments_count || 0} comments
+            </p>
+          </div>
+        )}
+
         {milestoneProgress && milestoneProgress.total > 0 && (
           <div className="mb-4">
             <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
@@ -171,6 +214,11 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
             </div>
           </div>
         )}
+
+        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+          <span>Last active {formatDate(lastActiveLabel)}</span>
+          <span>{project.collaborators_count || 0} collaborators</span>
+        </div>
       </Link>
 
       {showOwner && owner && (
@@ -202,6 +250,46 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
             {displayName || 'Member'}
           </span>
         </Link>
+      )}
+
+      {celebrationMode && (
+        <div className="px-6 pb-6 pt-2 border-t border-border">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={(event) => handleReaction(event, 'applaud', 'applauded')}
+              disabled={!isAuthenticated || !!reactionBusy}
+              className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                viewerReactions.applauded ? 'border-primary text-primary bg-primary/10' : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Hand className="w-3.5 h-3.5" />
+              Applaud {reactionCounts.applaud || 0}
+            </button>
+            <button
+              type="button"
+              onClick={(event) => handleReaction(event, 'star', 'starred')}
+              disabled={!isAuthenticated || !!reactionBusy}
+              className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                viewerReactions.starred ? 'border-primary text-primary bg-primary/10' : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Star className="w-3.5 h-3.5" />
+              Star {reactionCounts.star || 0}
+            </button>
+            <button
+              type="button"
+              onClick={(event) => handleReaction(event, 'inspired', 'inspired')}
+              disabled={!isAuthenticated || !!reactionBusy}
+              className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+                viewerReactions.inspired ? 'border-primary text-primary bg-primary/10' : 'border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Flame className="w-3.5 h-3.5" />
+              Inspired {reactionCounts.inspired || 0}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

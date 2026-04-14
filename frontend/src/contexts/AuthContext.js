@@ -9,6 +9,7 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [authSyncing, setAuthSyncing] = useState(true);
   /** Supabase `onAuthStateChange` emits `session: null` on failed password sign-in; do not wipe a legacy session. */
   const legacyAuthActiveRef = useRef(false);
 
@@ -65,10 +66,13 @@ export function AuthProvider({ children }) {
       if (session?.user) {
         legacyAuthActiveRef.current = false;
         setSession(session);
+        setAuthSyncing(true);
         const backendUser = await syncUserWithBackend(session.user, session.access_token);
         setUser(backendUser);
+        setAuthSyncing(false);
       } else if (!legacyAuthActiveRef.current) {
         setSession(null);
+        setAuthSyncing(false);
       }
       setLoading(false);
     });
@@ -78,13 +82,17 @@ export function AuthProvider({ children }) {
       if (session?.user) {
         legacyAuthActiveRef.current = false;
         setSession(session);
+        setAuthSyncing(true);
         const backendUser = await syncUserWithBackend(session.user, session.access_token);
         setUser(backendUser);
+        setAuthSyncing(false);
       } else if (legacyAuthActiveRef.current) {
         // Keep client-side legacy session; Supabase has no session for this tab.
+        setAuthSyncing(false);
       } else {
         setSession(null);
         setUser(null);
+        setAuthSyncing(false);
       }
       setLoading(false);
     });
@@ -256,6 +264,7 @@ export function AuthProvider({ children }) {
     loginWithGitHub,
     getAccessToken,
     isAuthenticated: !!(session?.user || user),
+    authReady: !loading && !authSyncing,
   };
 
   return (
