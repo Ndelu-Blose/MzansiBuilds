@@ -59,26 +59,9 @@ export default function DashboardPage() {
     if (!isAuthenticated || !authReady) return;
     setLoading(true);
     setProjectsLoadError('');
-    const [
-      projectsRes,
-      collabsRes,
-      trendingProjectsRes,
-      trendingBuildersRes,
-      digestRes,
-      activationStateRes,
-      notifRes,
-    ] = await Promise.allSettled([
-      projectsAPI.getMyProjects(),
-      collaborationAPI.getMyRequests(),
-      discoveryAPI.getTrendingProjects({ limit: 5 }),
-      discoveryAPI.getTrendingBuilders({ limit: 5 }),
-      digestAPI.getPreview(),
-      activationAPI.getDashboardState(),
-      notificationsAPI.list({ limit: 6, offset: 0 }),
-    ]);
-
-    if (projectsRes.status === 'fulfilled') {
-      const projectList = projectsRes.value.data.items || [];
+    try {
+      const projectsRes = await projectsAPI.getMyProjects();
+      const projectList = projectsRes.data.items || [];
       setProjects(projectList);
       setStats((prev) => ({
         ...prev,
@@ -86,11 +69,23 @@ export default function DashboardPage() {
         completed: projectList.filter((p) => p.stage === 'completed').length,
         inProgress: projectList.filter((p) => p.stage === 'in_progress').length,
       }));
-    } else {
-      console.error('Error fetching projects for dashboard:', projectsRes.reason);
+    } catch (error) {
+      console.error('Error fetching projects for dashboard:', error);
       setProjects([]);
       setProjectsLoadError('We could not load your workspace projects right now. Please retry.');
+    } finally {
+      // Render the page as soon as the core projects request completes.
+      setLoading(false);
     }
+
+    const [collabsRes, trendingProjectsRes, trendingBuildersRes, digestRes, activationStateRes, notifRes] = await Promise.allSettled([
+      collaborationAPI.getMyRequests(),
+      discoveryAPI.getTrendingProjects({ limit: 5 }),
+      discoveryAPI.getTrendingBuilders({ limit: 5 }),
+      digestAPI.getPreview(),
+      activationAPI.getDashboardState(),
+      notificationsAPI.list({ limit: 6, offset: 0 }),
+    ]);
 
     if (collabsRes.status === 'fulfilled') {
       const collabList = collabsRes.value.data.items || [];
@@ -132,12 +127,20 @@ export default function DashboardPage() {
       setNotifUnread(0);
       setNotifLoadError(true);
     }
-    setLoading(false);
   }, [isAuthenticated, authReady]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData, user?.id, authReady]);
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 6000);
+
+    if (isAuthenticated && authReady) {
+      clearTimeout(safetyTimer);
+      fetchData();
+    }
+
+    return () => clearTimeout(safetyTimer);
+  }, [fetchData, user?.id, authReady, isAuthenticated]);
 
   const hasStats = useMemo(
     () => stats.total > 0 || stats.completed > 0 || stats.inProgress > 0 || stats.pendingCollabs > 0,

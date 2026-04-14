@@ -72,23 +72,31 @@ export default function ProjectDetailPage() {
   const fetchProjectData = useCallback(async () => {
     try {
       setLoading(true);
-      const [projectRes, updatesRes, milestonesRes, commentsRes, collabsRes, activityRes, timelineRes] = await Promise.all([
-        projectsAPI.get(id),
-        updatesAPI.list(id),
-        milestonesAPI.list(id),
-        commentsAPI.list(id),
-        collaborationAPI.list(id),
-        activityAPI.list(id),
-        projectsAPI.getTimeline(id),
-      ]);
-
+      const projectRes = await projectsAPI.get(id);
       setProject(projectRes.data);
-      setUpdates(updatesRes.data.items || []);
-      setMilestones(milestonesRes.data.items || []);
-      setComments(commentsRes.data.items || []);
-      setCollaborators(collabsRes.data.items || []);
-      setActivityItems(activityRes.data.items || []);
-      setTimelineItems(timelineRes.data.items || []);
+      // Render core project shell before supporting queries complete.
+      setLoading(false);
+
+      try {
+        const [updatesRes, milestonesRes, commentsRes, collabsRes, activityRes, timelineRes] = await Promise.all([
+          updatesAPI.list(id),
+          milestonesAPI.list(id),
+          commentsAPI.list(id),
+          collaborationAPI.list(id),
+          activityAPI.list(id),
+          projectsAPI.getTimeline(id),
+        ]);
+
+        setUpdates(updatesRes.data.items || []);
+        setMilestones(milestonesRes.data.items || []);
+        setComments(commentsRes.data.items || []);
+        setCollaborators(collabsRes.data.items || []);
+        setActivityItems(activityRes.data.items || []);
+        setTimelineItems(timelineRes.data.items || []);
+      } catch (secondaryError) {
+        console.error('Error fetching project supporting data:', secondaryError);
+      }
+
       try {
         const shareRes = await shareAPI.getProjectCard(id);
         setShareCard(shareRes.data || null);
