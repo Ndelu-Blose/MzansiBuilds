@@ -106,10 +106,15 @@ export default function ExplorePage() {
 
   const hasActiveFilters = search || stage || tech || sort !== 'recent';
 
+  const builderInitial = (builder) => {
+    const name = builder?.user?.name || builder?.user?.email || 'B';
+    return name[0]?.toUpperCase() || 'B';
+  };
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="explore-page">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground tracking-tight flex items-center gap-3">
+    <div className="page-shell" data-testid="explore-page">
+        <div className="section-gap">
+          <h1 className="page-title flex items-center gap-3 text-3xl">
             <Code className="w-8 h-8 text-primary" />
             Explore Projects
           </h1>
@@ -119,8 +124,8 @@ export default function ExplorePage() {
           </div>
         </div>
 
-        <div className="bg-card border border-border rounded-xl shadow-card p-4 mb-8">
-          <div className="flex flex-col md:flex-row gap-4">
+        <div className="card-shell section-gap">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_190px_190px_auto]">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
               <input
@@ -159,7 +164,7 @@ export default function ExplorePage() {
             <button
               type="button"
               onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-md border transition-colors ${
+              className={`flex items-center justify-center gap-2 rounded-md border px-4 py-2.5 transition-colors ${
                 showFilters || tech
                   ? 'bg-accent border-primary/40 text-primary'
                   : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted'
@@ -249,17 +254,36 @@ export default function ExplorePage() {
           </p>
         )}
         {!loading && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-card border border-border rounded-xl p-4">
-              <h3 className="font-semibold text-foreground mb-2">Trending Projects</h3>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                {trendingProjects.slice(0, 3).map((p) => <li key={p.id}>{p.title}</li>)}
+          <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="rounded-xl border border-border bg-card p-4 shadow-card">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="section-title">Trending Projects</h3>
+                <Link to="/celebration" className="text-xs text-primary hover:underline">View all</Link>
+              </div>
+              <ul className="space-y-2 text-sm">
+                {trendingProjects.slice(0, 3).map((p) => (
+                  <li key={p.id} className="rounded-md border border-border px-3 py-2">
+                    <Link to={`/projects/${p.id}`} className="font-medium text-foreground hover:text-primary">
+                      {p.title}
+                    </Link>
+                  </li>
+                ))}
               </ul>
             </div>
-            <div className="bg-card border border-border rounded-xl p-4">
-              <h3 className="font-semibold text-foreground mb-2">Momentum Builders</h3>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                {trendingBuilders.slice(0, 3).map((b, i) => <li key={b.user?.id || i}>{b.user?.name || 'Builder'}</li>)}
+            <div className="rounded-xl border border-border bg-card p-4 shadow-card">
+              <h3 className="section-title mb-2">Momentum Builders</h3>
+              <ul className="space-y-2 text-sm">
+                {trendingBuilders.slice(0, 3).map((b, i) => (
+                  <li key={b.user?.id || i} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground">
+                        {builderInitial(b)}
+                      </span>
+                      <span className="font-medium text-foreground">{b.user?.name || 'Builder'}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">Score {b.momentum_score || 0}</span>
+                  </li>
+                ))}
               </ul>
             </div>
           </div>
@@ -284,9 +308,9 @@ export default function ExplorePage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
               {projects.map((project) => (
-                <ProjectCard key={project.id} project={project} showOwner={true} />
+                <ProjectCard key={project.id} project={project} showOwner={true} showQuickActions={true} />
               ))}
             </div>
 

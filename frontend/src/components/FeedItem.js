@@ -90,7 +90,7 @@ export default function FeedItem({ item, index }) {
 
   return (
     <div
-      className="feed-item relative mb-5 rounded-xl border border-border bg-card/90 p-5 shadow-card transition-colors animate-fade-in"
+      className="feed-item relative mb-4 rounded-xl border border-border bg-card/90 p-4 shadow-card transition-colors animate-fade-in"
       style={{ animationDelay: `${index * 50}ms` }}
       data-testid="feed-item"
     >
@@ -103,7 +103,7 @@ export default function FeedItem({ item, index }) {
         </Link>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <Link
               to={`/user/${item.author?.id}`}
               className="text-foreground font-medium hover:text-primary transition-colors"
@@ -122,7 +122,7 @@ export default function FeedItem({ item, index }) {
             <span className="text-muted-foreground text-xs">· {formatRelativeTime(item.created_at)}</span>
           </div>
 
-          <div className="bg-card/80 border border-border p-4 rounded-xl shadow-card mb-3">
+          <div className="mb-3 rounded-xl border border-border bg-card/80 p-3 shadow-card">
             <div className="flex items-start gap-2">
               <ActivityIcon type={item.activity_type} />
               <p className="text-foreground whitespace-pre-wrap">{item.content}</p>
@@ -138,7 +138,7 @@ export default function FeedItem({ item, index }) {
             )}
           </div>
 
-          <div className="flex items-center gap-2 text-muted-foreground flex-wrap">
+          <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
             <button
               type="button"
               onClick={() => handleReaction('like', 'liked')}

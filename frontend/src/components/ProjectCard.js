@@ -5,6 +5,23 @@ import StageBadge from './StageBadge';
 import { bookmarksAPI, celebrationAPI } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
+const MAX_CARD_COPY_CHARS = 160;
+
+function normalizePreviewText(value, maxChars = MAX_CARD_COPY_CHARS) {
+  if (!value) return '';
+  const normalized = String(value).replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trimEnd()}...`;
+}
+
+function getProjectDisplayCopy(project, maxChars = MAX_CARD_COPY_CHARS) {
+  if (!project) return '';
+  const descriptionFirst = normalizePreviewText(project.description, maxChars);
+  if (descriptionFirst) return descriptionFirst;
+  return normalizePreviewText(project.long_description || project.content || project.summary, maxChars);
+}
+
 function ownerAvatarUrl(user) {
   if (!user) return '';
   return (user.picture || user.avatar_url || '').trim() || '';
@@ -23,7 +40,13 @@ function ownerInitial(user) {
   return '';
 }
 
-export default function ProjectCard({ project, showOwner = true, celebrationMode = false, onBookmarkChange = null }) {
+export default function ProjectCard({
+  project,
+  showOwner = true,
+  celebrationMode = false,
+  showQuickActions = false,
+  onBookmarkChange = null,
+}) {
   const { isAuthenticated } = useAuth();
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(Boolean(project.is_bookmarked));
@@ -71,6 +94,7 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
   const healthLabel = project.health_status ? String(project.health_status).replace('_', ' ') : '';
   const completedLabel = project.completed_at || project.updated_at || project.created_at;
   const lastActiveLabel = project.last_activity_at || project.updated_at || project.created_at;
+  const displayCopy = getProjectDisplayCopy(project);
 
   const handleToggleBookmark = async (event) => {
     event.preventDefault();
@@ -119,15 +143,15 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
 
   return (
     <div
-      className={`bg-card border border-border rounded-xl shadow-card project-card overflow-hidden ${
+      className={`bg-card border border-border rounded-xl shadow-card project-card overflow-hidden transition-all duration-200 ${
         celebrationMode ? 'relative' : ''
       }`}
     >
       <Link
         to={`/projects/${project.id}`}
-        className={`block p-6 ${showOwner && owner ? 'pb-4' : ''} ${
+        className={`block p-5 ${showOwner && owner ? 'pb-4' : ''} ${
           celebrationMode ? 'relative overflow-hidden' : ''
-        }`}
+        } ${celebrationMode ? 'hover:bg-muted/20' : ''}`}
         data-testid="project-card"
       >
         {celebrationMode && (
@@ -136,7 +160,7 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
           </div>
         )}
 
-        <div className="flex items-start justify-between gap-4 mb-3">
+        <div className="mb-3 flex items-start justify-between gap-4">
           <div className="flex items-center gap-2">
             <StageBadge stage={project.stage} />
             {healthLabel ? (
@@ -146,7 +170,9 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
             ) : null}
           </div>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-xs text-muted-foreground">{formatDate(project.created_at)}</span>
+            <span className="rounded-full border border-border bg-background px-2 py-0.5 font-mono text-xs text-muted-foreground">
+              {formatDate(project.created_at)}
+            </span>
             <button
               type="button"
               onClick={handleToggleBookmark}
@@ -160,10 +186,10 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
           </div>
         </div>
 
-        <h3 className="text-lg font-semibold text-foreground mb-2 line-clamp-1">{project.title}</h3>
+        <h3 className="mb-2 line-clamp-2 text-[15px] font-semibold leading-snug text-foreground">{project.title}</h3>
 
-        {project.description && (
-          <p className="text-muted-foreground text-sm mb-4 line-clamp-2">{project.description}</p>
+        {displayCopy && (
+          <p className="mb-4 line-clamp-2 break-words whitespace-normal text-[13px] leading-6 text-muted-foreground">{displayCopy}</p>
         )}
 
         {project.tech_stack && project.tech_stack.length > 0 && (
@@ -187,12 +213,12 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
         )}
 
         {celebrationMode && (
-          <div className="mt-1 mb-4 rounded-md border border-border bg-background/60 p-2">
+          <div className="mt-2 mb-4 rounded-md border border-border bg-background/70 p-3">
             <p className="text-xs text-muted-foreground">
               Built by <span className="text-foreground font-medium">{displayName || 'Member'}</span> · Completed{' '}
               {completedLabel ? formatDate(completedLabel) : 'recently'}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1.5 text-xs text-muted-foreground">
               {project.collaborators_count || 0} collaborators · {project.comments_count || 0} comments
             </p>
           </div>
@@ -215,7 +241,7 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
           </div>
         )}
 
-        <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+        <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3 text-xs text-muted-foreground">
           <span>Last active {formatDate(lastActiveLabel)}</span>
           <span>{project.collaborators_count || 0} collaborators</span>
         </div>
@@ -252,14 +278,28 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
         </Link>
       )}
 
+      {!celebrationMode && showQuickActions && (
+        <div className="flex items-center justify-between border-t border-border px-5 py-2.5">
+          <span className="text-xs text-muted-foreground">Quick actions</span>
+          <div className="flex items-center gap-3 text-xs">
+            <Link to={`/projects/${project.id}`} className="font-medium text-primary hover:text-primary-hover">
+              View
+            </Link>
+            <Link to="/open-roles" className="text-muted-foreground hover:text-foreground">
+              Open roles
+            </Link>
+          </div>
+        </div>
+      )}
+
       {celebrationMode && (
-        <div className="px-6 pb-6 pt-2 border-t border-border">
+        <div className="border-t border-border px-6 pb-6 pt-3">
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={(event) => handleReaction(event, 'applaud', 'applauded')}
               disabled={!isAuthenticated || !!reactionBusy}
-              className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors ${
                 viewerReactions.applauded ? 'border-primary text-primary bg-primary/10' : 'border-border text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -270,7 +310,7 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
               type="button"
               onClick={(event) => handleReaction(event, 'star', 'starred')}
               disabled={!isAuthenticated || !!reactionBusy}
-              className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors ${
                 viewerReactions.starred ? 'border-primary text-primary bg-primary/10' : 'border-border text-muted-foreground hover:text-foreground'
               }`}
             >
@@ -281,7 +321,7 @@ export default function ProjectCard({ project, showOwner = true, celebrationMode
               type="button"
               onClick={(event) => handleReaction(event, 'inspired', 'inspired')}
               disabled={!isAuthenticated || !!reactionBusy}
-              className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs transition-colors ${
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors ${
                 viewerReactions.inspired ? 'border-primary text-primary bg-primary/10' : 'border-border text-muted-foreground hover:text-foreground'
               }`}
             >

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { feedAPI, projectsAPI } from '../lib/api';
 import { Loader2, RefreshCw, Rss } from 'lucide-react';
 import FeedItem from '../components/FeedItem';
@@ -133,10 +134,10 @@ export default function FeedPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="feed-page">
-        <div className="flex items-center justify-between mb-8">
+    <div className="page-shell max-w-3xl" data-testid="feed-page">
+        <div className="mb-6 flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground tracking-tight flex items-center gap-3">
+            <h1 className="page-title flex items-center gap-3 text-3xl">
               <Rss className="w-8 h-8 text-primary" />
               Activity Feed
             </h1>
@@ -153,15 +154,16 @@ export default function FeedPage() {
           </button>
         </div>
 
-        <div className="mb-5 rounded-xl border border-border bg-card p-3">
+        <div className="mb-4 rounded-xl border border-border bg-card p-2">
           <div className="flex flex-wrap gap-2">
             {FEED_TABS.map((tab) => (
               <Button
                 key={tab.id}
                 type="button"
                 size="sm"
-                variant={activeTab === tab.id ? 'default' : 'outline'}
+                variant={activeTab === tab.id ? 'default' : 'ghost'}
                 onClick={() => handleTabChange(tab.id)}
+                className={activeTab === tab.id ? '' : 'border border-border'}
               >
                 {tab.label}
               </Button>
@@ -169,7 +171,7 @@ export default function FeedPage() {
           </div>
         </div>
 
-        <div className="mb-6 rounded-xl border border-border bg-card p-4">
+        <div className="mb-5 rounded-xl border border-border bg-card p-3">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center text-sm font-medium text-foreground shrink-0">
               {(user?.name || user?.email || 'U')[0]?.toUpperCase()}
@@ -179,10 +181,10 @@ export default function FeedPage() {
                 value={composerText}
                 onChange={(event) => setComposerText(event.target.value)}
                 placeholder="What are you building?"
-                className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="min-h-16 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 disabled={!isAuthenticated || composerBusy}
               />
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={composerProjectId}
                   onChange={(event) => setComposerProjectId(event.target.value)}
@@ -205,6 +207,7 @@ export default function FeedPage() {
                   <option value="idea">Idea</option>
                   <option value="collaboration">Collaboration</option>
                 </select>
+                <span className="text-xs text-muted-foreground">Example: Built login flow and shipped password reset.</span>
                 <Button type="button" onClick={handleCreatePost} disabled={!isAuthenticated || !composerText.trim() || composerBusy}>
                   Post
                 </Button>
@@ -223,16 +226,30 @@ export default function FeedPage() {
         ) : null}
 
         {feedItems.length === 0 ? (
-          <div className="bg-card border border-border rounded-xl shadow-card p-12 text-center">
+          <div className="bg-card border border-border rounded-xl shadow-card p-8 text-center">
             <Rss className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-foreground mb-2">No updates yet</h3>
-            <p className="text-muted-foreground mb-4">Be the first to share an update on your project</p>
-            <Button type="button" onClick={handleRefresh} variant="outline">Refresh feed</Button>
+            <h3 className="text-lg font-medium text-foreground mb-2">Start your feed momentum</h3>
+            <p className="text-muted-foreground mb-4">Share your first update, then follow builders and projects to personalize this feed.</p>
+            <div className="mb-4 rounded-md border border-border bg-background p-3 text-left text-sm text-muted-foreground">
+              <p className="font-medium text-foreground">Example post</p>
+              <p className="mt-1">Built auth login today, shipped profile sync, and next up is notifications.</p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button type="button" onClick={() => document.querySelector('textarea')?.focus()}>
+                Create update
+              </Button>
+              <Button type="button" onClick={handleRefresh} variant="outline">
+                Refresh feed
+              </Button>
+              <Button asChild variant="outline">
+                <Link to="/explore">Follow projects</Link>
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="relative">
             <div className="absolute left-4 top-2 bottom-2 w-px bg-border" />
-            <div className="space-y-2 pl-8">
+            <div className="space-y-3 pl-8">
               {feedItems.map((item, index) => (
                 <FeedItem key={item.id} item={item} index={index} />
               ))}
