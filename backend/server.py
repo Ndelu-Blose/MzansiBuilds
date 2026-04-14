@@ -21,7 +21,7 @@ import json
 import re
 import httpx
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Set
 from jwt import PyJWKClient
 
 from database import get_db, engine, Base, AsyncSessionLocal
@@ -4212,51 +4212,69 @@ async def get_my_projects(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    query = (
-        select(Project)
-        .outerjoin(CollaborationRequest, CollaborationRequest.project_id == Project.id)
-        .where(
-            or_(
-                Project.user_id == user.id,
-                and_(
-                    CollaborationRequest.requester_user_id == user.id,
-                    CollaborationRequest.status == CollaborationStatus.accepted,
-                ),
+    try:
+        query = (
+            select(Project)
+            .outerjoin(CollaborationRequest, CollaborationRequest.project_id == Project.id)
+            .where(
+                or_(
+                    Project.user_id == user.id,
+                    and_(
+                        CollaborationRequest.requester_user_id == user.id,
+                        CollaborationRequest.status == CollaborationStatus.accepted,
+                    ),
+                )
             )
+            .distinct()
         )
-        .distinct()
-    )
-    
-    if stage:
-        try:
-            stage_enum = ProjectStage(stage)
-            query = query.where(Project.stage == stage_enum)
-        except ValueError:
-            pass
-    
-    query = query.order_by(Project.created_at.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
-    projects = result.scalars().all()
+
+        if stage:
+            try:
+                stage_enum = ProjectStage(stage)
+                query = query.where(Project.stage == stage_enum)
+            except ValueError:
+                pass
+
+        query = query.order_by(Project.created_at.desc()).offset(offset).limit(limit)
+        result = await db.execute(query)
+        projects = result.scalars().all()
+    except Exception as e:
+        logger.exception("Failed loading /my/projects base query for user %s", user.id)
+        raise HTTPException(status_code=500, detail="Could not load projects") from e
+
     project_ids = [p.id for p in projects]
-    bookmark_counts = await _bookmark_count_map(db, project_ids)
-    bookmarked_ids = await _bookmarked_ids_for_user(db, user.id, project_ids)
-    activity_map = await _project_activity_map(db, project_ids)
-    
+    bookmark_counts: Dict[str, int] = {}
+    bookmarked_ids: Set[str] = set()
+    activity_map: Dict[str, datetime] = {}
+
+    try:
+        bookmark_counts = await _bookmark_count_map(db, project_ids)
+        bookmarked_ids = await _bookmarked_ids_for_user(db, user.id, project_ids)
+        activity_map = await _project_activity_map(db, project_ids)
+    except Exception:
+        logger.exception("Project enrichment failed for /my/projects user %s", user.id)
+
     owned_count = sum(1 for project in projects if project.user_id == user.id)
-    return {
-        "items": [
-            project_to_response(
-                p,
-                bookmark_count=bookmark_counts.get(p.id, 0),
-                is_bookmarked=p.id in bookmarked_ids,
-                last_activity_at=activity_map.get(p.id) or p.updated_at,
+    items = []
+    for p in projects:
+        try:
+            items.append(
+                project_to_response(
+                    p,
+                    bookmark_count=bookmark_counts.get(p.id, 0),
+                    is_bookmarked=p.id in bookmarked_ids,
+                    last_activity_at=activity_map.get(p.id) or p.updated_at,
+                )
             )
-            for p in projects
-        ],
+        except Exception:
+            logger.exception("Skipping malformed project %s in /my/projects", p.id)
+
+    return {
+        "items": items,
         "meta": {
             "workspace_scope": "owned_and_accepted_collaborations",
             "owned_count": owned_count,
-            "collaboration_count": max(0, len(projects) - owned_count),
+            "collaboration_count": max(0, len(items) - owned_count),
         },
     }
 

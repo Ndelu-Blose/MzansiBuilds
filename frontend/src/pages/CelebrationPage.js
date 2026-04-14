@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { celebrationAPI } from '../lib/api';
 import { Loader2, Trophy, Sparkles, Flame, Hand, Star, CalendarDays } from 'lucide-react';
 import ProjectCard from '../components/ProjectCard';
@@ -15,6 +16,23 @@ const SORTS = [
   { id: 'trending', label: 'Trending', icon: Flame },
   { id: 'most_applauded', label: 'Most Applauded', icon: Hand },
 ];
+
+const MAX_SPOTLIGHT_CHARS = 320;
+
+function normalizePreviewText(value, maxChars = MAX_SPOTLIGHT_CHARS) {
+  if (!value) return '';
+  const normalized = String(value).replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trimEnd()}...`;
+}
+
+function getProjectDisplayCopy(projectLike, maxChars = MAX_SPOTLIGHT_CHARS) {
+  if (!projectLike) return '';
+  const primary = normalizePreviewText(projectLike.description, maxChars);
+  if (primary) return primary;
+  return normalizePreviewText(projectLike.long_description || projectLike.content || projectLike.summary, maxChars);
+}
 
 export default function CelebrationPage() {
   const [projects, setProjects] = useState([]);
@@ -109,17 +127,19 @@ export default function CelebrationPage() {
     );
   }
 
+  const spotlightDescription = getProjectDisplayCopy(spotlight);
+
   return (
     <div data-testid="celebration-page">
         <div
-          className="relative py-10 mb-6"
+          className="relative mb-6 overflow-hidden rounded-b-2xl py-10"
           style={{
             backgroundImage: 'url(/images/hero-celebration.png)',
             backgroundSize: 'cover',
             backgroundPosition: 'center',
           }}
         >
-          <div className="absolute inset-0 bg-background/85 backdrop-blur-[2px]" />
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-[2px]" />
           <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>
@@ -127,21 +147,21 @@ export default function CelebrationPage() {
                   <Trophy className="w-6 h-6 text-primary" />
                   <Sparkles className="w-5 h-5 text-primary" />
                 </div>
-                <h1 className="text-3xl sm:text-4xl font-black text-foreground tracking-tight mb-2">Celebration Wall</h1>
-                <p className="text-sm sm:text-base text-muted-foreground max-w-2xl">
+                <h1 className="mb-2 text-3xl font-black tracking-tight text-foreground sm:text-4xl">Celebration Wall</h1>
+                <p className="max-w-2xl text-sm text-muted-foreground sm:text-base">
                   Discover completed builds, celebrate creators, and applaud the projects inspiring the community.
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-2 text-xs">
-                <div className="rounded-lg border border-border bg-card/60 px-3 py-2 text-center">
+                <div className="rounded-lg border border-border bg-card/70 px-3 py-2 text-center shadow-sm">
                   <p className="text-muted-foreground">Completed</p>
                   <p className="text-foreground font-semibold">{summary.total_completed}</p>
                 </div>
-                <div className="rounded-lg border border-border bg-card/60 px-3 py-2 text-center">
+                <div className="rounded-lg border border-border bg-card/70 px-3 py-2 text-center shadow-sm">
                   <p className="text-muted-foreground">This week</p>
                   <p className="text-foreground font-semibold">{summary.this_week}</p>
                 </div>
-                <div className="rounded-lg border border-border bg-card/60 px-3 py-2 text-center">
+                <div className="rounded-lg border border-border bg-card/70 px-3 py-2 text-center shadow-sm">
                   <p className="text-muted-foreground">This month</p>
                   <p className="text-foreground font-semibold">{summary.this_month}</p>
                 </div>
@@ -196,20 +216,22 @@ export default function CelebrationPage() {
           ) : null}
 
           {spotlight && (
-            <div className="mb-8 rounded-2xl border border-primary/20 bg-gradient-to-r from-card to-card/80 p-6 ring-1 ring-primary/20">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+            <div className="mb-8 rounded-2xl border border-primary/25 bg-gradient-to-br from-card via-card to-primary/5 p-6 shadow-sm ring-1 ring-primary/20">
+              <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0 flex-1">
+                  <p className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-primary">
                     <Trophy className="w-3.5 h-3.5" />
                     Spotlight project
                   </p>
-                  <h2 className="mt-3 text-2xl font-bold text-foreground">{spotlight.title}</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <h2 className="mt-3 text-2xl font-bold leading-tight text-foreground md:text-3xl">{spotlight.title}</h2>
+                  <p className="mt-2 text-sm text-muted-foreground/90">
                     Built by {spotlight.builder?.name || spotlight.builder?.username || 'Builder'} · Completed{' '}
                     {spotlight.completed_at ? new Date(spotlight.completed_at).toLocaleDateString() : 'recently'}
                   </p>
-                  {spotlight.description && (
-                    <p className="mt-3 max-w-3xl text-sm text-muted-foreground">{spotlight.description}</p>
+                  {spotlightDescription && (
+                    <p className="mt-4 max-w-3xl text-sm leading-7 text-muted-foreground line-clamp-4 whitespace-normal break-words">
+                      {spotlightDescription}
+                    </p>
                   )}
                   <div className="mt-4 flex flex-wrap gap-2">
                     {(spotlight.tech_stack || []).slice(0, 5).map((tech) => (
@@ -219,14 +241,14 @@ export default function CelebrationPage() {
                     ))}
                   </div>
                 </div>
-                <Button asChild>
-                  <a href={`/projects/${spotlight.id}`}>View Project</a>
+                <Button asChild className="shrink-0">
+                  <Link to={`/projects/${spotlight.id}`}>View Project</Link>
                 </Button>
               </div>
-              <div className="mt-4 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1"><Hand className="w-3.5 h-3.5" /> {spotlight.reaction_counts?.applaud || 0} applauds</span>
-                <span className="inline-flex items-center gap-1"><Star className="w-3.5 h-3.5" /> {spotlight.reaction_counts?.star || 0} stars</span>
-                <span className="inline-flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> {spotlight.reaction_counts?.inspired || 0} inspired</span>
+              <div className="mt-5 flex flex-wrap gap-2 border-t border-border/70 pt-4 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1"><Hand className="w-3.5 h-3.5" /> {spotlight.reaction_counts?.applaud || 0} applauds</span>
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1"><Star className="w-3.5 h-3.5" /> {spotlight.reaction_counts?.star || 0} stars</span>
+                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1"><Sparkles className="w-3.5 h-3.5" /> {spotlight.reaction_counts?.inspired || 0} inspired</span>
               </div>
             </div>
           )}
@@ -239,7 +261,7 @@ export default function CelebrationPage() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-7">
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                 {projects.map((project) => (
                   <ProjectCard key={project.id} project={project} showOwner={true} celebrationMode={true} />
                 ))}

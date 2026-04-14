@@ -2,18 +2,18 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
-import { projectsAPI, collaborationAPI, notificationsAPI, bookmarksAPI, discoveryAPI, digestAPI, activationAPI } from '../lib/api';
+import { projectsAPI, collaborationAPI, notificationsAPI, discoveryAPI, digestAPI, activationAPI } from '../lib/api';
 import {
   Plus,
   FolderKanban,
   Trophy,
   Users,
   ChevronRight,
-  Loader2,
   ExternalLink,
   Zap,
   Bell,
   AlertTriangle,
+  Clock3,
 } from 'lucide-react';
 import ProjectCard from '../components/ProjectCard';
 import CreateProjectModal from '../components/CreateProjectModal';
@@ -43,8 +43,6 @@ export default function DashboardPage() {
   const [notifPreview, setNotifPreview] = useState([]);
   const [notifUnread, setNotifUnread] = useState(0);
   const [notifLoadError, setNotifLoadError] = useState(false);
-  const [savedProjects, setSavedProjects] = useState([]);
-  const [matchedProjects, setMatchedProjects] = useState([]);
   const [trendingProjects, setTrendingProjects] = useState([]);
   const [trendingBuilders, setTrendingBuilders] = useState([]);
   const [digestPreview, setDigestPreview] = useState(null);
@@ -61,67 +59,80 @@ export default function DashboardPage() {
     if (!isAuthenticated || !authReady) return;
     setLoading(true);
     setProjectsLoadError('');
+    const [
+      projectsRes,
+      collabsRes,
+      trendingProjectsRes,
+      trendingBuildersRes,
+      digestRes,
+      activationStateRes,
+      notifRes,
+    ] = await Promise.allSettled([
+      projectsAPI.getMyProjects(),
+      collaborationAPI.getMyRequests(),
+      discoveryAPI.getTrendingProjects({ limit: 5 }),
+      discoveryAPI.getTrendingBuilders({ limit: 5 }),
+      digestAPI.getPreview(),
+      activationAPI.getDashboardState(),
+      notificationsAPI.list({ limit: 6, offset: 0 }),
+    ]);
 
-    try {
-      const [projectsRes, collabsRes, savedRes, matchedRes, trendingProjectsRes, trendingBuildersRes, digestRes, activationStateRes] = await Promise.all([
-        projectsAPI.getMyProjects(),
-        collaborationAPI.getMyRequests(),
-        bookmarksAPI.list({ limit: 5, offset: 0 }),
-        projectsAPI.getMatched({ limit: 5, offset: 0 }),
-        discoveryAPI.getTrendingProjects({ limit: 5 }),
-        discoveryAPI.getTrendingBuilders({ limit: 5 }),
-        digestAPI.getPreview(),
-        activationAPI.getDashboardState(),
-      ]);
-
-      const projectList = projectsRes.data.items || [];
+    if (projectsRes.status === 'fulfilled') {
+      const projectList = projectsRes.value.data.items || [];
       setProjects(projectList);
-
-      const collabList = collabsRes.data.items || [];
-      setCollabRequests(collabList.filter(c => c.status === 'pending'));
-      setSavedProjects((savedRes.data.items || []).map((item) => item.project).filter(Boolean));
-      setMatchedProjects(matchedRes.data.items || []);
-      setTrendingProjects(trendingProjectsRes.data.items || []);
-      setTrendingBuilders(trendingBuildersRes.data.items || []);
-      setDigestPreview(digestRes.data || null);
-      setActivationState(activationStateRes.data || {
-        has_projects: false,
-        has_matches: false,
-        has_activity: false,
-        skills_count: 0,
-        first_match_count: 0,
-      });
-
-      setStats({
+      setStats((prev) => ({
+        ...prev,
         total: projectList.length,
-        completed: projectList.filter(p => p.stage === 'completed').length,
-        inProgress: projectList.filter(p => p.stage === 'in_progress').length,
-        pendingCollabs: collabList.filter(c => c.status === 'pending').length,
-      });
-    } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+        completed: projectList.filter((p) => p.stage === 'completed').length,
+        inProgress: projectList.filter((p) => p.stage === 'in_progress').length,
+      }));
+    } else {
+      console.error('Error fetching projects for dashboard:', projectsRes.reason);
+      setProjects([]);
       setProjectsLoadError('We could not load your workspace projects right now. Please retry.');
-      // Preserve current cards when a refresh fails, so recent optimistic updates remain visible.
-      setStats({
-        total: 0,
-        completed: 0,
-        inProgress: 0,
-        pendingCollabs: 0,
-      });
-    } finally {
-      setLoading(false);
     }
 
-    try {
+    if (collabsRes.status === 'fulfilled') {
+      const collabList = collabsRes.value.data.items || [];
+      const pending = collabList.filter((c) => c.status === 'pending');
+      setCollabRequests(pending);
+      setStats((prev) => ({ ...prev, pendingCollabs: pending.length }));
+    } else {
+      setCollabRequests([]);
+      setStats((prev) => ({ ...prev, pendingCollabs: 0 }));
+    }
+
+    setTrendingProjects(trendingProjectsRes.status === 'fulfilled' ? trendingProjectsRes.value.data.items || [] : []);
+    setTrendingBuilders(trendingBuildersRes.status === 'fulfilled' ? trendingBuildersRes.value.data.items || [] : []);
+    setDigestPreview(digestRes.status === 'fulfilled' ? digestRes.value.data || null : null);
+    setActivationState(
+      activationStateRes.status === 'fulfilled'
+        ? activationStateRes.value.data || {
+            has_projects: false,
+            has_matches: false,
+            has_activity: false,
+            skills_count: 0,
+            first_match_count: 0,
+          }
+        : {
+            has_projects: false,
+            has_matches: false,
+            has_activity: false,
+            skills_count: 0,
+            first_match_count: 0,
+          }
+    );
+
+    if (notifRes.status === 'fulfilled') {
       setNotifLoadError(false);
-      const notifRes = await notificationsAPI.list({ limit: 6, offset: 0 });
-      setNotifPreview(notifRes.data.items || []);
-      setNotifUnread(typeof notifRes.data.unread_count === 'number' ? notifRes.data.unread_count : 0);
-    } catch (_err) {
+      setNotifPreview(notifRes.value.data.items || []);
+      setNotifUnread(typeof notifRes.value.data.unread_count === 'number' ? notifRes.value.data.unread_count : 0);
+    } else {
       setNotifPreview([]);
       setNotifUnread(0);
       setNotifLoadError(true);
     }
+    setLoading(false);
   }, [isAuthenticated, authReady]);
 
   useEffect(() => {
@@ -142,17 +153,37 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      <div className="page-shell" data-testid="dashboard">
+        <div className="section-gap space-y-3">
+          <div className="h-8 w-72 animate-pulse rounded-md bg-muted" />
+          <div className="h-4 w-56 animate-pulse rounded-md bg-muted" />
+        </div>
+        <div className="section-gap grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[1, 2, 3, 4].map((item) => (
+            <div key={item} className="card-shell h-20 animate-pulse bg-muted/60" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="space-y-4 lg:col-span-2">
+            {[1, 2, 3].map((item) => (
+              <div key={item} className="card-shell h-28 animate-pulse bg-muted/60" />
+            ))}
+          </div>
+          <div className="space-y-4">
+            {[1, 2].map((item) => (
+              <div key={item} className="card-shell h-40 animate-pulse bg-muted/60" />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="dashboard">
-        <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+    <div className="page-shell" data-testid="dashboard">
+        <div className="section-gap flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground tracking-tight">
+            <h1 className="page-title text-3xl">
               Welcome back, <span className="text-primary">{user?.name || user?.email?.split('@')[0]}</span>
             </h1>
             <p className="text-muted-foreground mt-1">Your build in public workspace</p>
@@ -170,7 +201,7 @@ export default function DashboardPage() {
         </div>
 
         {hasStats ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="section-gap grid grid-cols-2 gap-3 md:grid-cols-4">
             <div className="bg-card border border-border p-4 rounded-xl shadow-card">
               <div className="flex items-center gap-3">
                 <FolderKanban className="w-5 h-5 text-muted-foreground" />
@@ -209,13 +240,13 @@ export default function DashboardPage() {
             </div>
           </div>
         ) : (
-          <div className="mb-8 rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+          <div className="section-gap rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
             Tip: add your first project or import a GitHub repo to start building momentum.
           </div>
         )}
 
         {activationState.first_match_count > 0 && (
-          <div className="mb-6 rounded-xl border border-primary/30 bg-primary/10 p-4">
+          <div className="section-gap rounded-xl border border-primary/30 bg-primary/10 p-4">
             <p className="text-sm text-foreground">
               <span className="font-semibold">{activationState.first_match_count} projects</span> need your skills right now.
               {' '}
@@ -225,18 +256,18 @@ export default function DashboardPage() {
         )}
 
         {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Projects Section */}
           <div className="lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-semibold text-foreground">Your Projects</h2>
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="section-title">Your Projects</h2>
               <Button variant="ghost" onClick={fetchData}>
                 Refresh
               </Button>
             </div>
 
             {projectsLoadError ? (
-              <div className="bg-card border border-destructive/30 rounded-xl shadow-card p-6 mb-6">
+              <div className="mb-6 rounded-xl border border-destructive/30 bg-card p-6 shadow-card">
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
                   <div>
@@ -246,9 +277,8 @@ export default function DashboardPage() {
                   </div>
                 </div>
               </div>
-            ) : null}
-            {projects.length === 0 ? (
-              <div className="bg-card border border-border rounded-xl shadow-card p-12 text-center">
+            ) : projects.length === 0 ? (
+              <div className="rounded-xl border border-border bg-card p-12 text-center shadow-card">
                 <FolderKanban className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-foreground mb-2">You have not created any projects yet</h3>
                 <p className="text-muted-foreground mb-6">Start building in public by importing a repo, creating an idea, or joining a collaboration.</p>
@@ -267,50 +297,36 @@ export default function DashboardPage() {
                 )}
               </div>
             ) : (
-              <div className="space-y-8">
+              <div className="space-y-6">
                 <div className="space-y-4">
-                {projects.slice(0, 5).map(project => (
-                  <ProjectCard key={project.id} project={project} showOwner={false} />
-                ))}
-                {projects.length > 5 && (
-                  <Link
-                    to="/my-projects"
-                    className="block text-center text-primary hover:text-primary-hover py-2 text-sm font-medium"
-                  >
-                    View all {projects.length} projects
-                  </Link>
-                )}
-                </div>
-
-                <div>
-                  <h2 className="text-xl font-semibold text-foreground mb-4">Matched for You</h2>
-                  {matchedProjects.length === 0 ? (
-                    <div className="bg-card border border-border rounded-xl shadow-card p-6 text-sm text-muted-foreground">
-                      {activationState.skills_count === 0
-                        ? 'Add skills to your profile and we will surface projects seeking those skills.'
-                        : 'No matches yet. Try exploring Open Roles or check back after new projects are posted.'}
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {matchedProjects.map((project) => (
-                        <ProjectCard key={`matched-${project.id}`} project={project} showOwner={true} />
-                      ))}
-                    </div>
+                  {projects.slice(0, 5).map(project => (
+                    <ProjectCard key={project.id} project={project} showOwner={false} showQuickActions={true} />
+                  ))}
+                  {projects.length > 5 && (
+                    <Link
+                      to="/my-projects"
+                      className="block py-2 text-center text-sm font-medium text-primary hover:text-primary-hover"
+                    >
+                      View all {projects.length} projects
+                    </Link>
                   )}
                 </div>
-
-                <div>
-                  <h2 className="text-xl font-semibold text-foreground mb-4">Saved Projects</h2>
-                  {savedProjects.length === 0 ? (
-                    <div className="bg-card border border-border rounded-xl shadow-card p-6 text-sm text-muted-foreground">
-                      Bookmark interesting projects to keep a quick watchlist here.
-                    </div>
+                <div className="card-shell">
+                  <h3 className="section-title mb-3 flex items-center gap-2">
+                    <Clock3 className="h-4 w-4 text-primary" />
+                    Recent Activity
+                  </h3>
+                  {notifPreview.length === 0 ? (
+                    <p className="meta-copy">Recent updates will appear here as your workspace becomes active.</p>
                   ) : (
-                    <div className="space-y-4">
-                      {savedProjects.map((project) => (
-                        <ProjectCard key={`saved-${project.id}`} project={project} showOwner={true} />
+                    <ul className="space-y-2">
+                      {notifPreview.slice(0, 4).map((n) => (
+                        <li key={n.id} className="rounded-md border border-border px-3 py-2">
+                          <p className="text-sm font-medium text-foreground line-clamp-1">{n.title}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">{n.body}</p>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   )}
                 </div>
               </div>
