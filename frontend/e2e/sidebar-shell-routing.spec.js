@@ -3,7 +3,7 @@ const { test, expect } = require('@playwright/test');
 test.describe('Sidebar shell routing', () => {
   test('public app-shell pages render shared chrome', async ({ page }) => {
     await page.goto('/feed');
-    await expect(page.getByText('MzansiBuilds').first()).toBeVisible();
+    await expect(page.locator('aside').first()).toBeVisible();
     await expect(page.getByRole('link', { name: 'Explore' }).first()).toBeVisible();
 
     await page.goto('/explore');

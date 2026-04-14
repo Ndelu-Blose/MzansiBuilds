@@ -117,13 +117,6 @@ export default function AppSidebar() {
 
   return (
     <aside className="hidden lg:flex fixed left-0 top-16 h-[calc(100vh-4rem)] w-72 flex-col border-r border-border bg-card/60 backdrop-blur">
-      <div className="px-5 py-4 border-b border-border">
-        <Link to="/" className="text-xl font-bold text-foreground">
-          Mzansi<span className="text-primary">Builds</span>
-        </Link>
-        <p className="mt-1 text-xs text-muted-foreground">Build in public workspace</p>
-      </div>
-
       <div className="flex-1 overflow-y-auto px-4 py-5 space-y-6">
         <SidebarGroup title="Main">
           <SidebarLink to="/dashboard" label="Dashboard" icon={FolderKanban} />

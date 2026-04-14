@@ -113,9 +113,13 @@ export default function SiteHeader({ variant = 'app' }) {
     <header className="sticky top-0 z-50 glass border-b border-border">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          <Link to="/" className="text-xl font-bold text-foreground shrink-0">
-            Mzansi<span className="text-primary">Builds</span>
-          </Link>
+          {variant === 'marketing' ? (
+            <Link to="/" className="text-xl font-bold text-foreground shrink-0">
+              Mzansi<span className="text-primary">Builds</span>
+            </Link>
+          ) : (
+            <div />
+          )}
 
           {variant === 'marketing' ? (
             <nav className="hidden md:flex items-stretch gap-0">
@@ -143,7 +147,7 @@ export default function SiteHeader({ variant = 'app' }) {
               )}
             </nav>
           ) : (
-            <div className="hidden md:block text-sm text-muted-foreground">Use the sidebar to navigate your workspace</div>
+            <div className="hidden md:block" />
           )}
 
           <div className="flex items-center gap-2 shrink-0">

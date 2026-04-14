@@ -78,14 +78,25 @@ export default function DashboardPage() {
       setLoading(false);
     }
 
-    const [collabsRes, trendingProjectsRes, trendingBuildersRes, digestRes, activationStateRes, notifRes] = await Promise.allSettled([
-      collaborationAPI.getMyRequests(),
-      discoveryAPI.getTrendingProjects({ limit: 5 }),
-      discoveryAPI.getTrendingBuilders({ limit: 5 }),
-      digestAPI.getPreview(),
-      activationAPI.getDashboardState(),
-      notificationsAPI.list({ limit: 6, offset: 0 }),
-    ]);
+    let collabsRes;
+    let trendingProjectsRes;
+    let trendingBuildersRes;
+    let digestRes;
+    let activationStateRes;
+    let notifRes;
+    try {
+      [collabsRes, trendingProjectsRes, trendingBuildersRes, digestRes, activationStateRes, notifRes] = await Promise.allSettled([
+        collaborationAPI.getMyRequests(),
+        discoveryAPI.getTrendingProjects({ limit: 5 }),
+        discoveryAPI.getTrendingBuilders({ limit: 5 }),
+        digestAPI.getPreview(),
+        activationAPI.getDashboardState(),
+        notificationsAPI.list({ limit: 6, offset: 0 }),
+      ]);
+    } catch (error) {
+      console.error('Dashboard non-critical data load failed unexpectedly:', error);
+      return;
+    }
 
     if (collabsRes.status === 'fulfilled') {
       const collabList = collabsRes.value.data.items || [];
@@ -100,6 +111,9 @@ export default function DashboardPage() {
     setTrendingProjects(trendingProjectsRes.status === 'fulfilled' ? trendingProjectsRes.value.data.items || [] : []);
     setTrendingBuilders(trendingBuildersRes.status === 'fulfilled' ? trendingBuildersRes.value.data.items || [] : []);
     setDigestPreview(digestRes.status === 'fulfilled' ? digestRes.value.data || null : null);
+    if (digestRes.status === 'rejected') {
+      console.warn('Digest preview unavailable:', digestRes.reason);
+    }
     setActivationState(
       activationStateRes.status === 'fulfilled'
         ? activationStateRes.value.data || {
@@ -189,7 +203,6 @@ export default function DashboardPage() {
             <h1 className="page-title text-3xl">
               Welcome back, <span className="text-primary">{user?.name || user?.email?.split('@')[0]}</span>
             </h1>
-            <p className="text-muted-foreground mt-1">Your build in public workspace</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={() => setShowCreateModal(true)}>

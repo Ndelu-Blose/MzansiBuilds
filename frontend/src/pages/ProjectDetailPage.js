@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { projectsAPI, updatesAPI, milestonesAPI, commentsAPI, collaborationAPI, activityAPI, bookmarksAPI, shareAPI } from '../lib/api';
@@ -397,6 +397,32 @@ export default function ProjectDetailPage() {
 
   const isLikelyId = (value) => typeof value === 'string' && /^[0-9a-f-]{16,}$/i.test(value);
   const healthStatus = project?.health_status ? String(project.health_status).replace('_', ' ') : '';
+  const storySections = useMemo(() => {
+    const raw = (project?.description || '').trim();
+    if (!raw) return [];
+
+    const splitByMarkdownHeadings = raw.split(/\n(?=#{1,3}\s)/g).map((part) => part.trim()).filter(Boolean);
+    if (splitByMarkdownHeadings.length > 1) {
+      return splitByMarkdownHeadings.map((chunk, index) => {
+        const lines = chunk.split('\n');
+        const headingLine = lines[0].replace(/^#{1,3}\s*/, '').trim();
+        const body = lines.slice(1).join('\n').trim();
+        return {
+          id: `section-${index}`,
+          title: headingLine || `Section ${index + 1}`,
+          body: body || headingLine,
+        };
+      });
+    }
+
+    const paragraphChunks = raw.split(/\n{2,}/).map((chunk) => chunk.trim()).filter(Boolean);
+    const fallbackTitles = ['What this project is', 'Problem / Goal', 'How it works', 'Current focus'];
+    return paragraphChunks.map((body, index) => ({
+      id: `section-${index}`,
+      title: fallbackTitles[index] || `Details ${index + 1}`,
+      body,
+    }));
+  }, [project?.description]);
 
   const handleToggleBookmark = async () => {
     if (!isAuthenticated || bookmarkBusy || !project) return;
@@ -494,19 +520,25 @@ export default function ProjectDetailPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="project-detail">
         <div className="rounded-2xl border border-border bg-card/90 p-6 md:p-8 mb-8">
-          <div className="flex flex-col gap-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-3">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="px-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => navigate(-1)}
-                  data-testid="back-btn"
-                >
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back
-                </Button>
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <Button
+                type="button"
+                variant="ghost"
+                className="px-0 text-muted-foreground hover:text-foreground"
+                onClick={() => navigate(-1)}
+                data-testid="back-btn"
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back
+              </Button>
+              {project.last_activity_at ? (
+                <p className="text-xs text-muted-foreground">Last active {formatRelative(project.last_activity_at)}</p>
+              ) : null}
+            </div>
+
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <StageBadge stage={project.stage} />
                   {healthStatus ? (
@@ -514,82 +546,74 @@ export default function ProjectDetailPage() {
                       {healthStatus}
                     </Badge>
                   ) : null}
-                  <Badge variant="secondary" className="font-mono text-[10px] uppercase">Assessment workspace</Badge>
+                  {project.verification_status ? (
+                    <Badge variant={badgeVariantForStatus(project.verification_status)} className="font-mono text-[10px] uppercase">
+                      {humanize(project.verification_status)}
+                    </Badge>
+                  ) : null}
                 </div>
+
                 <h1 className="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">{project.title}</h1>
-                <p className="text-sm text-muted-foreground">Track and complete your project competencies with clearer progress and focused actions.</p>
-                <p className="text-xs text-muted-foreground">Created {formatDate(project.created_at)}{project.last_activity_at ? ` ? Last activity ${formatRelative(project.last_activity_at)}` : ''}</p>
+                <p className="max-w-3xl text-sm text-muted-foreground">
+                  Track and complete your project competencies with clearer progress, meaningful milestones, and focused collaboration.
+                </p>
+
+                {project.user && (
+                  <div className="space-y-2">
+                    <Link
+                      to={`/user/${project.user.id}`}
+                      className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground">
+                        {project.user.name?.[0]?.toUpperCase() || project.user.email?.[0]?.toUpperCase()}
+                      </div>
+                      {project.user.name || project.user.email?.split('@')[0]}
+                    </Link>
+                    <TrustSignalsRow
+                      band={project.user.builder_score_band}
+                      completedProjects={project.user.completed_projects_count}
+                      receipts={project.user.receipts_count}
+                      lastActiveAt={project.user.last_active_at}
+                    />
+                  </div>
+                )}
+
+                {project.tech_stack && project.tech_stack.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {project.tech_stack.map((tech, i) => (
+                      <span
+                        key={i}
+                        className="rounded-md border border-border bg-background/70 px-2.5 py-1 text-xs font-mono text-foreground"
+                      >
+                        {tech}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="w-full rounded-xl border border-border bg-background/60 p-4 lg:max-w-sm">
+
+              <div className="rounded-xl border border-border bg-background/60 p-4">
+                <h3 className="text-sm font-semibold text-foreground mb-3">Project snapshot</h3>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium text-foreground">Progress</span>
+                  <span className="text-muted-foreground">Progress</span>
                   <span className="font-mono text-foreground">{milestoneProgress}%</span>
                 </div>
                 <div className="mt-2 h-2 rounded-full bg-muted">
                   <div className="h-2 rounded-full bg-primary transition-all" style={{ width: `${milestoneProgress}%` }} />
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">{completedMilestones} completed ? {remainingMilestones} remaining</p>
+                <p className="mt-2 text-xs text-muted-foreground">{completedMilestones} completed • {remainingMilestones} remaining</p>
                 <p className="mt-1 text-xs text-muted-foreground">Next: {nextStepLabel}</p>
+                <div className="mt-4 space-y-1 text-xs text-muted-foreground">
+                  <p>Created {formatDate(project.created_at)}</p>
+                  {project.import_provenance?.source === 'github' && project.import_provenance.github_repo_full_name ? (
+                    <p data-testid="import-provenance-note">
+                      Imported from {project.import_provenance.github_repo_full_name}
+                    </p>
+                  ) : null}
+                  {project.support_needed ? <p>Looking for: {project.support_needed}</p> : null}
+                </div>
               </div>
             </div>
-
-            {project.import_provenance?.source === 'github' && project.import_provenance.github_repo_full_name && (
-              <p className="text-xs text-muted-foreground" data-testid="import-provenance-note">
-                Imported from GitHub ({project.import_provenance.github_repo_full_name}
-                {project.import_provenance.imported_at
-                  ? ` ? ${new Date(project.import_provenance.imported_at).toLocaleString()}`
-                  : ''}
-                )
-              </p>
-            )}
-
-            {project.description && <p className="max-w-4xl text-sm text-muted-foreground">{project.description}</p>}
-
-            {project.tech_stack && project.tech_stack.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {project.tech_stack.map((tech, i) => (
-                  <span
-                    key={i}
-                    className="rounded-md border border-border bg-background/70 px-2.5 py-1 text-xs font-mono text-foreground"
-                  >
-                    {tech}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {project.support_needed && (
-              <div className="rounded-lg border border-border bg-background/50 p-3">
-                <p className="text-sm text-foreground">
-                  <strong>Looking for:</strong> {project.support_needed}
-                </p>
-              </div>
-            )}
-
-            {project.user && (
-              <div className="space-y-2">
-                <Link
-                  to={`/user/${project.user.id}`}
-                  className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-foreground">
-                    {project.user.name?.[0]?.toUpperCase() || project.user.email?.[0]?.toUpperCase()}
-                  </div>
-                  {project.user.name || project.user.email?.split('@')[0]}
-                </Link>
-                <TrustSignalsRow
-                  band={project.user.builder_score_band}
-                  completedProjects={project.user.completed_projects_count}
-                  receipts={project.user.receipts_count}
-                  lastActiveAt={project.user.last_active_at}
-                />
-                {project.verification_status && (
-                  <Badge variant={badgeVariantForStatus(project.verification_status)} className="font-mono">
-                    {humanize(project.verification_status)}
-                  </Badge>
-                )}
-              </div>
-            )}
 
             <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
               {isOwner ? (
@@ -632,9 +656,23 @@ export default function ProjectDetailPage() {
         {/* Content Grid */}
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-[260px_minmax(0,1fr)]">
           {/* Main Content */}
-          <div className="order-2 space-y-6 lg:order-2">
+          <div className="order-2 flex flex-col gap-6 lg:order-2">
+            {storySections.length > 0 && (
+              <div id="overview" className="order-1 rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
+                <h2 className="text-xl font-semibold text-foreground mb-4">Project Story</h2>
+                <div className="space-y-4">
+                  {storySections.map((section) => (
+                    <section key={section.id} className="rounded-lg border border-border/70 bg-background/50 p-4">
+                      <h3 className="text-sm font-semibold text-foreground mb-2">{section.title}</h3>
+                      <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">{section.body}</p>
+                    </section>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {project.repo_summary && (
-              <div id="repo" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
+              <div id="repo" className="order-2 rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
                 <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
                   <Github className="w-5 h-5 text-primary" />
                   Repository Truth
@@ -667,20 +705,20 @@ export default function ProjectDetailPage() {
               </div>
             )}
 
-            <div id="readme" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
+            <div id="readme" className="order-3 rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h2 className="text-xl font-semibold text-foreground mb-3 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-primary" />
                 README Preview
               </h2>
               {project.readme_present ? (
-                <pre className="text-sm text-muted-foreground whitespace-pre-wrap max-h-72 overflow-y-auto">{project.readme_excerpt}</pre>
+                <pre className="text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap max-h-80 overflow-y-auto">{project.readme_excerpt}</pre>
               ) : (
                 <p className="text-sm text-muted-foreground">README is not available yet. Add one to help others understand this project quickly.</p>
               )}
             </div>
 
             {/* Updates Section */}
-            <div id="updates" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
+            <div id="updates" className="order-6 rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Zap className="w-5 h-5 text-primary" />
                 Updates
@@ -807,7 +845,7 @@ export default function ProjectDetailPage() {
                               </div>
                             )}
                           </div>
-                          <p className="text-foreground whitespace-pre-wrap">{update.body}</p>
+                          <p className="text-foreground whitespace-pre-wrap leading-relaxed">{update.body}</p>
                           <p className="font-mono text-xs text-muted-foreground mt-2">
                             {formatDate(update.created_at)}
                             {update.author && (
@@ -823,7 +861,7 @@ export default function ProjectDetailPage() {
             </div>
 
             {/* Milestones */}
-            <div id="milestones" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
+            <div id="milestones" className="order-4 rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Target className="w-5 h-5 text-primary" />
                 Milestones
@@ -926,7 +964,7 @@ export default function ProjectDetailPage() {
               )}
             </div>
 
-            <div className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
+            <div className="order-7 rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4">Activity</h3>
               {activityItems.length === 0 ? (
                 <div className="text-center py-6">
@@ -951,13 +989,13 @@ export default function ProjectDetailPage() {
               )}
             </div>
 
-            <div id="timeline" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
+            <div id="timeline" className="order-5 rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h3 className="font-semibold text-foreground mb-4">Build Timeline</h3>
               <ProjectTimeline items={timelineItems} />
             </div>
 
             {/* Comments Section */}
-            <div id="comments" className="rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
+            <div id="comments" className="order-8 rounded-xl border border-border bg-card p-6 ring-1 ring-border/40">
               <h2 className="text-xl font-semibold text-foreground mb-4 flex items-center gap-2">
                 <MessageSquare className="w-5 h-5 text-primary" />
                 Comments ({comments.length})
@@ -1032,13 +1070,14 @@ export default function ProjectDetailPage() {
           {/* Sidebar */}
           <div className="order-1 space-y-6 lg:order-1 lg:sticky lg:top-24 lg:self-start">
             <div className="rounded-xl border border-border bg-card p-4 ring-1 ring-border/40">
-              <h3 className="text-sm font-semibold text-foreground mb-3">Workspace sections</h3>
+              <h3 className="text-sm font-semibold text-foreground mb-3">On this page</h3>
               <nav className="space-y-2 text-sm">
+                <a href="#overview" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Story</a>
                 <a href="#repo" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Repository</a>
                 <a href="#readme" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">README</a>
-                <a href="#updates" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Updates</a>
                 <a href="#milestones" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Milestones</a>
                 <a href="#timeline" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Timeline</a>
+                <a href="#updates" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Updates</a>
                 <a href="#comments" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Comments</a>
                 <a href="#collaboration" className="block rounded-md border border-border/70 px-3 py-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground">Collaboration</a>
               </nav>
