@@ -81,6 +81,25 @@ class ContributorRole(enum.Enum):
     contributor = "contributor"
 
 
+class ProjectReactionType(enum.Enum):
+    applaud = "applaud"
+    star = "star"
+    inspired = "inspired"
+
+
+class FeedPostType(enum.Enum):
+    update = "update"
+    completed = "completed"
+    idea = "idea"
+    collaboration = "collaboration"
+
+
+class FeedReactionType(enum.Enum):
+    like = "like"
+    applaud = "applaud"
+    inspired = "inspired"
+
+
 class User(Base):
     __tablename__ = 'users'
     
@@ -99,8 +118,24 @@ class User(Base):
     profile = relationship("Profile", back_populates="user", uselist=False, cascade="all, delete-orphan")
     projects = relationship("Project", back_populates="user", cascade="all, delete-orphan")
     comments = relationship("Comment", back_populates="user", cascade="all, delete-orphan")
+    feed_posts = relationship("FeedPost", back_populates="author", cascade="all, delete-orphan")
+    feed_post_reactions = relationship("FeedPostReaction", back_populates="user", cascade="all, delete-orphan")
+    feed_comments = relationship("FeedComment", back_populates="user", cascade="all, delete-orphan")
+    following = relationship(
+        "UserFollowing",
+        back_populates="follower",
+        foreign_keys="UserFollowing.follower_user_id",
+        cascade="all, delete-orphan",
+    )
+    followers = relationship(
+        "UserFollowing",
+        back_populates="following",
+        foreign_keys="UserFollowing.following_user_id",
+        cascade="all, delete-orphan",
+    )
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     collaboration_requests = relationship("CollaborationRequest", back_populates="requester", cascade="all, delete-orphan")
+    project_reactions = relationship("ProjectReaction", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     connected_accounts = relationship("ConnectedAccount", back_populates="user", cascade="all, delete-orphan")
     bookmarks = relationship("ProjectBookmark", back_populates="user", cascade="all, delete-orphan")
@@ -189,6 +224,8 @@ class Project(Base):
     commits = relationship("ProjectCommit", back_populates="project", cascade="all, delete-orphan")
     bookmarks = relationship("ProjectBookmark", back_populates="project", cascade="all, delete-orphan")
     collaboration_receipts = relationship("CollaborationReceipt", back_populates="project", cascade="all, delete-orphan")
+    reactions = relationship("ProjectReaction", back_populates="project", cascade="all, delete-orphan")
+    feed_posts = relationship("FeedPost", back_populates="project")
 
 
 class ProjectBookmark(Base):
@@ -205,6 +242,96 @@ class ProjectBookmark(Base):
     __table_args__ = (
         Index("idx_project_bookmarks_user_project_unique", "user_id", "project_id", unique=True),
         Index("idx_project_bookmarks_project_created", "project_id", "created_at"),
+    )
+
+
+class ProjectReaction(Base):
+    __tablename__ = "project_reactions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    reaction_type = Column(SQLEnum(ProjectReactionType), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+    project = relationship("Project", back_populates="reactions")
+    user = relationship("User", back_populates="project_reactions")
+
+    __table_args__ = (
+        Index("idx_project_reactions_unique_user_type", "project_id", "user_id", "reaction_type", unique=True),
+        Index("idx_project_reactions_project_created", "project_id", "created_at"),
+    )
+
+
+class FeedPost(Base):
+    __tablename__ = "feed_posts"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    author_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    activity_type = Column(SQLEnum(FeedPostType), nullable=False, index=True, default=FeedPostType.update)
+    content = Column(Text, nullable=False)
+    tags_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    author = relationship("User", back_populates="feed_posts")
+    project = relationship("Project", back_populates="feed_posts")
+    reactions = relationship("FeedPostReaction", back_populates="post", cascade="all, delete-orphan")
+    comments = relationship("FeedComment", back_populates="post", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_feed_posts_created_desc", created_at.desc()),
+        Index("idx_feed_posts_author_created", "author_user_id", "created_at"),
+        Index("idx_feed_posts_type_created", "activity_type", "created_at"),
+    )
+
+
+class FeedPostReaction(Base):
+    __tablename__ = "feed_post_reactions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    post_id = Column(String(36), ForeignKey("feed_posts.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    reaction_type = Column(SQLEnum(FeedReactionType), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+    post = relationship("FeedPost", back_populates="reactions")
+    user = relationship("User", back_populates="feed_post_reactions")
+
+    __table_args__ = (
+        Index("idx_feed_post_reactions_unique", "post_id", "user_id", "reaction_type", unique=True),
+        Index("idx_feed_post_reactions_post_created", "post_id", "created_at"),
+    )
+
+
+class FeedComment(Base):
+    __tablename__ = "feed_comments"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    post_id = Column(String(36), ForeignKey("feed_posts.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+    post = relationship("FeedPost", back_populates="comments")
+    user = relationship("User", back_populates="feed_comments")
+
+
+class UserFollowing(Base):
+    __tablename__ = "user_following"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    follower_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    following_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+    follower = relationship("User", back_populates="following", foreign_keys=[follower_user_id])
+    following = relationship("User", back_populates="followers", foreign_keys=[following_user_id])
+
+    __table_args__ = (
+        Index("idx_user_following_unique", "follower_user_id", "following_user_id", unique=True),
+        Index("idx_user_following_lookup", "following_user_id", "created_at"),
     )
 
 

@@ -131,6 +131,36 @@ async function installGithubImportMocks(page) {
       return;
     }
 
+    if (method === 'GET' && path === '/api/my/bookmarks') {
+      await json({ items: [], total: 0, limit: 5, offset: 0 });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/projects/matched') {
+      await json({ items: [], total: 0, limit: 5, offset: 0 });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/trending/projects') {
+      await json({ items: [] });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/trending/builders') {
+      await json({ items: [] });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/digest/preview') {
+      await json({ active_projects: [], open_roles: [], trending_builders: [], milestone_highlights: [] });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/dashboard/activation-state') {
+      await json({ has_projects: false, has_matches: false, has_activity: false, skills_count: 0, first_match_count: 0 });
+      return;
+    }
+
     if (method === 'GET' && path === '/api/integrations/github/account') {
       await json({ connected: true, username: 'e2e-owner', avatar_url: null, scopes: 'read:user', connected_at: iso() });
       return;

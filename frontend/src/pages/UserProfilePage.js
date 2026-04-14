@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { profileAPI, shareAPI, usersAPI } from '../lib/api';
 import { Loader2, Github, Code, Trophy, Zap, ExternalLink, FolderKanban, Calendar, MapPin, Linkedin, Globe } from 'lucide-react';
-import Layout from '../components/Layout';
 import ProjectCard from '../components/ProjectCard';
 import BuilderScoreCard from '../components/profile/BuilderScoreCard';
 import TrustSignalsRow from '../components/profile/TrustSignalsRow';
@@ -63,29 +62,24 @@ export default function UserProfilePage() {
 
   if (loading) {
     return (
-      <Layout>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        </div>
-      </Layout>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      </div>
     );
   }
 
   if (!userData) {
     return (
-      <Layout>
-        <div className="max-w-7xl mx-auto px-4 py-12 text-center">
-          <p className="text-muted-foreground">User not found</p>
-        </div>
-      </Layout>
+      <div className="max-w-7xl mx-auto px-4 py-12 text-center">
+        <p className="text-muted-foreground">User not found</p>
+      </div>
     );
   }
 
   const { profile, stats, recent_projects } = userData;
 
   return (
-    <Layout>
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="user-profile-page">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="user-profile-page">
         <div className="bg-card border border-border rounded-xl shadow-card p-8 mb-8">
           <div className="flex flex-col sm:flex-row items-start gap-6">
             {profile?.avatar_url || userData.picture ? (
@@ -254,7 +248,6 @@ export default function UserProfilePage() {
             </div>
           )}
         </div>
-      </div>
-    </Layout>
+    </div>
   );
 }

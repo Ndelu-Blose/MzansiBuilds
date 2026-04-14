@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { projectsAPI, discoveryAPI } from '../lib/api';
 import { Loader2, Search, Filter, X, Code } from 'lucide-react';
-import Layout from '../components/Layout';
 import ProjectCard from '../components/ProjectCard';
 import { Button } from '@/components/ui/button';
 
@@ -108,8 +107,7 @@ export default function ExplorePage() {
   const hasActiveFilters = search || stage || tech || sort !== 'recent';
 
   return (
-    <Layout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="explore-page">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-testid="explore-page">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground tracking-tight flex items-center gap-3">
             <Code className="w-8 h-8 text-primary" />
@@ -301,7 +299,6 @@ export default function ExplorePage() {
             )}
           </>
         )}
-      </div>
-    </Layout>
+    </div>
   );
 }

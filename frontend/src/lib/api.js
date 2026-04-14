@@ -38,6 +38,11 @@ api.interceptors.request.use(async (config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.response?.status === 401 && String(error.config?.url || '').includes('/my/projects')) {
+      console.error(
+        '[MzansiBuilds API] Unauthorized /my/projects request. This usually means auth sync has not completed or the session is stale. Re-authenticate and retry.'
+      );
+    }
     if (error.response?.status === 405) {
       const cfg = error.config || {};
       const base = (cfg.baseURL || '').replace(/\/$/, '');
@@ -120,6 +125,7 @@ export const commentsAPI = {
 export const notificationsAPI = {
   list: (params = {}) => api.get('/notifications', { params }),
   markRead: (notificationId) => api.patch(`/notifications/${notificationId}/read`),
+  markAllRead: () => api.patch('/notifications/read-all'),
 };
 
 // Collaboration API
@@ -134,6 +140,8 @@ export const collaborationAPI = {
 export const usersAPI = {
   getBuilderScore: (userId) => api.get(`/users/${userId}/builder-score`),
   getReceipts: (userId, params = {}) => api.get(`/users/${userId}/receipts`, { params }),
+  follow: (userId) => api.post(`/users/${userId}/follow`),
+  unfollow: (userId) => api.delete(`/users/${userId}/follow`),
 };
 
 export const discoveryAPI = {
@@ -144,6 +152,7 @@ export const discoveryAPI = {
 
 export const digestAPI = {
   getPreview: () => api.get('/digest/preview'),
+  getPreferences: () => api.get('/digest/preferences'),
   updatePreferences: (payload) => api.put('/digest/preferences', payload),
 };
 
@@ -167,12 +176,19 @@ export const profileAPI = {
 
 // Feed API
 export const feedAPI = {
-  get: (params = {}) => api.get('/feed', { params })
+  get: (params = {}) => api.get('/feed', { params }),
+  createPost: (payload) => api.post('/feed/posts', payload),
+  react: (postId, reactionType) => api.post(`/feed/posts/${postId}/reactions`, { reaction_type: reactionType }),
+  unreact: (postId, reactionType) => api.delete(`/feed/posts/${postId}/reactions/${reactionType}`),
+  getComments: (postId, params = {}) => api.get(`/feed/posts/${postId}/comments`, { params }),
+  comment: (postId, payload) => api.post(`/feed/posts/${postId}/comments`, payload),
 };
 
 // Celebration Wall API
 export const celebrationAPI = {
-  get: (params = {}) => api.get('/celebration', { params })
+  get: (params = {}) => api.get('/celebration', { params }),
+  react: (projectId, reactionType) => api.post(`/projects/${projectId}/reactions`, { reaction_type: reactionType }),
+  unreact: (projectId, reactionType) => api.delete(`/projects/${projectId}/reactions/${reactionType}`),
 };
 
 export default api;

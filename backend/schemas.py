@@ -1,6 +1,6 @@
 # Pydantic Schemas for MzansiBuilds
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
-from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
+from typing import Any, Dict, List, Optional, Literal
 from datetime import datetime
 from enum import Enum
 
@@ -51,6 +51,33 @@ class OwnershipTypeEnum(str, Enum):
     contributor = "contributor"
     external = "external"
     none = "none"
+
+
+class ProjectReactionTypeEnum(str, Enum):
+    applaud = "applaud"
+    star = "star"
+    inspired = "inspired"
+
+
+class FeedTabEnum(str, Enum):
+    all = "all"
+    following = "following"
+    my_projects = "my_projects"
+    completed = "completed"
+    trending = "trending"
+
+
+class FeedPostTypeEnum(str, Enum):
+    update = "update"
+    completed = "completed"
+    idea = "idea"
+    collaboration = "collaboration"
+
+
+class FeedReactionTypeEnum(str, Enum):
+    like = "like"
+    applaud = "applaud"
+    inspired = "inspired"
 
 
 # ========== User Schemas ==========
@@ -302,9 +329,26 @@ class TrendingBuilderItemResponse(BaseModel):
 
 
 class DigestPreferenceUpdate(BaseModel):
-    enabled: Optional[bool] = None
-    frequency: Optional[str] = None
+    frequency: Optional[Literal["weekly", "biweekly"]] = None
     channels: Optional[List[str]] = None
+
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, value):
+        if value is None:
+            return value
+        allowed = {"email_digest", "comment_emails"}
+        cleaned = [str(v).strip().lower() for v in value if str(v).strip()]
+        invalid = [v for v in cleaned if v not in allowed]
+        if invalid:
+            raise ValueError(f"Invalid channels: {', '.join(sorted(set(invalid)))}")
+        return list(dict.fromkeys(cleaned))
+
+
+class DigestPreferenceResponse(BaseModel):
+    user_id: str
+    frequency: Literal["weekly", "biweekly"]
+    channels: List[str]
 
 
 class WeeklyDigestPreviewResponse(BaseModel):
@@ -603,6 +647,137 @@ class FeedResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class FeedAuthorSummary(BaseModel):
+    id: str
+    name: Optional[str] = None
+    username: Optional[str] = None
+    picture: Optional[str] = None
+
+
+class FeedProjectSummary(BaseModel):
+    id: str
+    title: str
+    stage: Optional[ProjectStageEnum] = None
+
+
+class FeedReactionCounts(BaseModel):
+    like: int = 0
+    applaud: int = 0
+    inspired: int = 0
+
+
+class FeedViewerReactions(BaseModel):
+    liked: bool = False
+    applauded: bool = False
+    inspired: bool = False
+
+
+class FeedCommentItemResponse(BaseModel):
+    id: str
+    post_id: str
+    user_id: str
+    content: str
+    created_at: datetime
+    user: Optional[FeedAuthorSummary] = None
+
+
+class FeedPostItemResponse(BaseModel):
+    id: str
+    activity_type: FeedPostTypeEnum = FeedPostTypeEnum.update
+    content: str
+    tags: List[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    author: FeedAuthorSummary
+    project: Optional[FeedProjectSummary] = None
+    reactions: FeedReactionCounts = Field(default_factory=FeedReactionCounts)
+    viewer_reactions: FeedViewerReactions = Field(default_factory=FeedViewerReactions)
+    comments_count: int = 0
+    recent_comments: List[FeedCommentItemResponse] = Field(default_factory=list)
+
+
+class FeedListResponse(BaseModel):
+    items: List[FeedPostItemResponse]
+    total: int
+    limit: int
+    offset: int
+    tab: FeedTabEnum = FeedTabEnum.all
+
+
+class FeedPostCreateRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+    project_id: Optional[str] = None
+    activity_type: FeedPostTypeEnum = FeedPostTypeEnum.update
+    tags: List[str] = Field(default_factory=list)
+
+
+class FeedCommentCreateRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
+
+
+class FeedReactionUpdateRequest(BaseModel):
+    reaction_type: FeedReactionTypeEnum
+
+
+class FeedReactionUpdateResponse(BaseModel):
+    post_id: str
+    reactions: FeedReactionCounts
+    viewer_reactions: FeedViewerReactions
+
+
+class CelebrationBuilderSummary(BaseModel):
+    id: str
+    name: Optional[str] = None
+    username: Optional[str] = None
+    picture: Optional[str] = None
+
+
+class CelebrationReactionCounts(BaseModel):
+    applaud: int = 0
+    star: int = 0
+    inspired: int = 0
+
+
+class CelebrationReactionFlags(BaseModel):
+    applauded: bool = False
+    starred: bool = False
+    inspired: bool = False
+
+
+class CelebrationProjectItemResponse(ProjectResponse):
+    completed_at: Optional[datetime] = None
+    builder: Optional[CelebrationBuilderSummary] = None
+    collaborators_count: int = 0
+    comments_count: int = 0
+    reaction_counts: CelebrationReactionCounts = Field(default_factory=CelebrationReactionCounts)
+    viewer_reactions: CelebrationReactionFlags = Field(default_factory=CelebrationReactionFlags)
+
+
+class CelebrationSummaryResponse(BaseModel):
+    total_completed: int = 0
+    this_week: int = 0
+    this_month: int = 0
+
+
+class CelebrationListResponse(BaseModel):
+    items: List[CelebrationProjectItemResponse]
+    spotlight: Optional[CelebrationProjectItemResponse] = None
+    summary: CelebrationSummaryResponse
+    total: int
+    limit: int
+    offset: int
+
+
+class ProjectReactionUpdateRequest(BaseModel):
+    reaction_type: ProjectReactionTypeEnum
+
+
+class ProjectReactionUpdateResponse(BaseModel):
+    project_id: str
+    reaction_counts: CelebrationReactionCounts
+    viewer_reactions: CelebrationReactionFlags
 
 
 # ========== Auth Response Schemas ==========
