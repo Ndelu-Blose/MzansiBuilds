@@ -34,6 +34,7 @@ export default function ExplorePage() {
   const [showFilters, setShowFilters] = useState(false);
   const [trendingProjects, setTrendingProjects] = useState([]);
   const [trendingBuilders, setTrendingBuilders] = useState([]);
+  const trendingFetched = useRef(false);
 
   const limit = 12;
   const offsetRef = useRef(0);
@@ -62,13 +63,7 @@ export default function ExplorePage() {
         if (tech) params.tech = tech;
 
         const response = await projectsAPI.list(params);
-        const [tp, tb] = await Promise.all([
-          discoveryAPI.getTrendingProjects({ limit: 4 }),
-          discoveryAPI.getTrendingBuilders({ limit: 4 }),
-        ]);
         const items = response.data.items || [];
-        setTrendingProjects(tp.data.items || []);
-        setTrendingBuilders(tb.data.items || []);
 
         if (loadMore) {
           setProjects((prev) => [...prev, ...items]);
@@ -96,6 +91,23 @@ export default function ExplorePage() {
     }, 300);
     return () => clearTimeout(debounce);
   }, [fetchProjects]);
+
+  useEffect(() => {
+    if (trendingFetched.current) return;
+    trendingFetched.current = true;
+    Promise.all([
+      discoveryAPI.getTrendingProjects({ limit: 4 }),
+      discoveryAPI.getTrendingBuilders({ limit: 4 }),
+    ])
+      .then(([tp, tb]) => {
+        setTrendingProjects(tp.data.items || []);
+        setTrendingBuilders(tb.data.items || []);
+      })
+      .catch(() => {
+        setTrendingProjects([]);
+        setTrendingBuilders([]);
+      });
+  }, []);
 
   const clearFilters = () => {
     setSearch('');

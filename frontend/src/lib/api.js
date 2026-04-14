@@ -17,7 +17,8 @@ const api = axios.create({
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
-  }
+  },
+  timeout: 12000,
 });
 
 // Add auth token to requests
@@ -38,6 +39,10 @@ api.interceptors.request.use(async (config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.code === 'ECONNABORTED') {
+      console.warn('[MzansiBuilds API] Request timed out:', error.config?.url);
+      return Promise.reject(error);
+    }
     if (error.response?.status === 401 && String(error.config?.url || '').includes('/my/projects')) {
       console.error(
         '[MzansiBuilds API] Unauthorized /my/projects request. This usually means auth sync has not completed or the session is stale. Re-authenticate and retry.'
