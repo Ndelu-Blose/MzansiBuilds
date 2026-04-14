@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { collaborationAPI, notificationsAPI } from '../lib/api';
-import { cn } from '@/lib/utils';
+import { cn } from '../lib/utils';
 
 function SidebarLink({ to, label, icon: Icon, badge, onClick, isDanger = false }) {
   return (
